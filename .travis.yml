@@ -1,0 +1,22 @@
+language: c
+compiler: gcc
+env:
+  - DEBUG=--enable-debug
+  - DEBUG=
+
+script:
+  - git rev-parse --git-dir >/dev/null
+  - git log -1 --format=format:%ci%n | sed -e 's/ [-+].*$//;s/ /T/;s/^/D /' > manifest
+  - echo $(git log -1 --format=format:%H) > manifest.uuid
+  - ./configure $DEBUG
+  - make
+  - tar cfz release$DEBUG.tar.gz --transform 's|.libs/||g' sqlite3.h .libs/libsqlite3.so*
+
+deploy:
+  provider: releases
+  api_key: '$GITHUB_API_KEY'
+  file: 'release$DEBUG.tar.gz'
+  skip_cleanup: true
+  on:
+    tags: true
+    all_branches: true
