@@ -107,6 +107,9 @@ const char *sqlite3TestInit(Tcl_Interp *interp){
   extern int TestExpert_Init(Tcl_Interp*);
   extern int Sqlitetest_window_Init(Tcl_Interp *);
   extern int Sqlitetestvdbecov_Init(Tcl_Interp *);
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+  extern int Sqlitetestwalreplication_Init(Tcl_Interp*);
+#endif  /* SQLITE_ENABLE_WAL_REPLICATION */
 
   Tcl_CmdInfo cmdInfo;
 
@@ -170,6 +173,11 @@ const char *sqlite3TestInit(Tcl_Interp *interp){
 #if defined(SQLITE_ENABLE_FTS3) || defined(SQLITE_ENABLE_FTS4)
   Sqlitetestfts3_Init(interp);
 #endif
+
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+  Sqlitetestwalreplication_Init(interp);
+#endif  /* SQLITE_ENABLE_WAL_REPLICATION */
+
   TestExpert_Init(interp);
   Sqlitetest_window_Init(interp);
   Sqlitetestvdbecov_Init(interp);
