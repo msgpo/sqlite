@@ -191,6 +191,29 @@ do_test 3.6 {
   list [catch {sqlite3_wal_replication_leader db main} msg] $msg
 } {1 SQLITE_ERROR}
 
+# Test that a connection in leader replication mode works transparently from the
+# user point of view, and that regular write queries and rollbacks can be
+# performed.
+#
+do_test 3.7.1 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_leader db main
+  execsql {
+    CREATE TABLE test (n INT);
+    INSERT INTO test(n) VALUES(1);
+    SELECT n FROM test;
+  }
+} {1}
+do_test 3.7.2 {
+  execsql {
+    BEGIN;
+    INSERT INTO test(n) VALUES(2);
+    ROLLBACK;
+    SELECT n FROM test;
+  }
+} {1}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-4.* - focus on testing the
 # implementation of the sqlite3_wal_replication_follower() interface.
