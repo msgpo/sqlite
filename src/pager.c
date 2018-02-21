@@ -3157,6 +3157,22 @@ static int pagerRollbackWal(Pager *pPager){
   **   + Reload page content from the database (if refcount>0).
   */
   pPager->dbSize = pPager->dbOrigSize;
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+  if( pPager->pWalReplication ){
+    /* When in leader WAL replication mode fire the xUndo method of the
+    ** replication implementation. The method implementation is typically in
+    ** charge of broadcasting the event to other nodes, and ensure that a quorum
+    ** of them have received the message.
+    **
+    ** The return code is currently ignored, since in any case we want to
+    ** rollback the transaction on this node. The WAL replication implementation
+    ** should ensure graceful recovery after a failure due to loss of quorum.
+    */
+    assert( pPager->pWalReplication->xUndo );
+    pPager->pWalReplication->xUndo(
+        pPager->pWalReplication, pPager->pWalReplicationArg);
+  }
+#endif /* SQLITE_ENABLE_WAL_REPLICATION && !SQLITE_OMIT_WAL */
   rc = sqlite3WalUndo(pPager->pWal, pagerUndoCallback, (void *)pPager);
   pList = sqlite3PcacheDirtyList(pPager->pPCache);
   while( pList && rc==SQLITE_OK ){
@@ -7971,6 +7987,33 @@ int sqlite3PagerWalReplicationFrames(
     sqlite3WalEndReadTransaction(pPager->pWal);
   }
 
+  return rc;
+}
+
+/* No-op undo callback for follower WAL replication mode */
+static int pagerNoopUndoCallback(void *pCtx, Pgno iPg) {
+  return SQLITE_OK;
+}
+
+/*
+** Undo WAL changes in the context of a replicated transaction, performing a
+** rollback.
+*/
+int sqlite3PagerWalReplicationUndo(Pager *pPager){
+  int rc;
+
+  /* Make sure we are in follower replication mode */
+  if( pPager->bWalReplicationFollower!=1 ){
+    return SQLITE_ERROR;
+  }
+
+  rc = sqlite3WalUndo(pPager->pWal, pagerNoopUndoCallback, (void *)pPager);
+
+  /* Finalize the transaction */
+  if( rc==SQLITE_OK ){
+    rc = sqlite3WalEndWriteTransaction(pPager->pWal);
+    sqlite3WalEndReadTransaction(pPager->pWal);
+  }
   return rc;
 }
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */

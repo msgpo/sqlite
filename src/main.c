@@ -2651,6 +2651,40 @@ int sqlite3_wal_replication_frames(
   return SQLITE_ERROR;
 #endif /* SQLITE_OMIT_WAL */
 }
+
+/*
+** Undo WAL changes in the context of a replicated transaction that is
+** being rolled back.
+**
+** This interface must be called only on connections that have been switched to
+** follower WAL replication mode using sqlite3_wal_replication_follower().
+*/
+int sqlite3_wal_replication_undo(sqlite3 *db, const char *zSchema){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+    sqlite3BtreeEnter(pBt);
+    Pager *pPager = sqlite3BtreePager(pBt);
+    assert( pPager );
+    rc = sqlite3PagerWalReplicationUndo(pPager);
+    sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 
 /*
