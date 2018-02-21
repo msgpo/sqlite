@@ -7782,6 +7782,11 @@ int sqlite3PagerWalReplicationGet(
 **
 ** If the bEnabled flag is 1 and WAL replication is already enabled on this
 ** pager (either leader or follower WAL replication), an error is returned.
+**
+** If the bEnabled flag is 0 and either leader or follower WAL replication is
+** enabled on this pager, the pager will be reset to no WAL
+** replication. Otherwise, if no WAL replication was configured for this pager,
+** an error is returned.
 */
 int sqlite3PagerWalReplicationSet(
   Pager *pPager,
@@ -7821,6 +7826,14 @@ int sqlite3PagerWalReplicationSet(
     pPager->bWalReplicationFollower = pReplication == 0;
     pPager->pWalReplication = pReplication;
     pPager->pWalReplicationArg = pArg;
+  }else{
+    /* We require WAL replication to be currently enabled */
+    if( pPager->pWalReplication==0 && pPager->bWalReplicationFollower==0 ){
+      return SQLITE_ERROR;
+    }
+    pPager->bWalReplicationFollower = 0;
+    pPager->pWalReplication = 0;
+    pPager->pWalReplicationArg = 0;
   }
 
   return SQLITE_OK;
