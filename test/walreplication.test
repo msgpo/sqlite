@@ -258,6 +258,19 @@ do_test 4.5 {
   list [catch {sqlite3_wal_replication_follower db main} msg] $msg
 } {1 SQLITE_ERROR}
 
+# Test that an error is returned when trying to perform a backup in follower WAL
+# replication mode.
+#
+do_test 4.6 {
+  reset_db
+  sqlite3_wal db
+  execsql { CREATE TABLE test (n INT) }
+  sqlite3_wal_replication_follower db main
+  catch { db2 close }
+  sqlite3 db2 test2.db
+  list [catch {sqlite3_backup B db2 main db main} msg] $msg
+} {1 {sqlite3_backup_init() failed}}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-5.* - focus on testing the
 # implementation of the sqlite3_wal_replication_none() interface.
