@@ -9668,6 +9668,9 @@ SQLITE_EXPERIMENTAL int sqlite3_wal_replication_leader(
 ** SQLite nodes all WAL events received by a leader connection, and wait for a
 ** quorum before returning from the relevant WAL hooks (write frames, undo).
 **
+** When a database is in follower WAL replication mode, no backup can be
+** performed on it.
+**
 ** The [sqlite3_wal_replication_follower()] interface is only available when the
 ** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
 */
