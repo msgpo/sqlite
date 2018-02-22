@@ -450,4 +450,25 @@ do_test 6.2.3 {
   execsql { SELECT COUNT(a) FROM TEST }
 } {0}
 
+#-------------------------------------------------------------------------
+# The following block of tests - walreplication-7.* - focus on testing the
+# implementation of the sqlite3_wal_replication_checkpoint() interface.
+
+# Test checkpointing with connections in follower WAL replication mode.
+#
+do_test 7.1.1 {
+  reset_db
+  sqlite3_wal db
+  execsql {
+    CREATE TABLE test (n INT);
+  }
+  list [catch {sqlite3_wal_replication_checkpoint db main} msg] $msg
+} {1 SQLITE_ERROR}
+do_test 7.1.2 {
+  sqlite3_wal_replication_follower db main
+  sqlite3_wal_replication_checkpoint db main
+
+  file size ./test.db-wal
+} {0}
+
 finish_test
