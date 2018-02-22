@@ -203,6 +203,7 @@ int sqlite3PagerSharedLock(Pager *pPager);
   int sqlite3PagerWalReplicationFrames(Pager*,
     int, int, int, unsigned*, void*, unsigned, int);
   int sqlite3PagerWalReplicationUndo(Pager*);
+  int sqlite3PagerWalReplicationCheckpoint(Pager*, sqlite3*, int, int*, int*);
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 
 /* Functions used to query pager state and configuration. */
