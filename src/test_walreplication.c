@@ -531,6 +531,54 @@ static int SQLITE_TCLAPI test_wal_replication_none(
 }
 
 /*
+** tclcmd: sqlite3_wal_replication_checkpoint HANDLE SCHEMA
+**
+** Checkpoint a database in follower WAL replication mode, using the
+** SQLITE_CHECKPOINT_TRUNCATE checkpoint mode.
+*/
+static int SQLITE_TCLAPI test_wal_replication_checkpoint(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int rc;
+  sqlite3 *db;
+  const char *zSchema;
+  int nLog;
+  int nCkpt;
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv,
+        "HANDLE SCHEMA");
+    return TCL_ERROR;
+  }
+
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  zSchema = Tcl_GetString(objv[2]);
+
+  rc = sqlite3_wal_replication_checkpoint(db, zSchema,
+      SQLITE_CHECKPOINT_TRUNCATE, &nLog, &nCkpt);
+
+  if( rc!=SQLITE_OK ){
+    Tcl_AppendResult(interp, sqlite3ErrName(rc), (char*)0);
+    return TCL_ERROR;
+  }
+  if( nLog!=0 ){
+    Tcl_AppendResult(interp, "the WAL was not truncated", (char*)0);
+    return TCL_ERROR;
+  }
+  if( nCkpt!=0 ){
+    Tcl_AppendResult(interp, "only some frames were checkpointed", (char*)0);
+    return TCL_ERROR;
+  }
+
+  return TCL_OK;
+}
+
+/*
 ** This routine registers the custom TCL commands defined in this
 ** module.  This should be the only procedure visible from outside
 ** of this module.
@@ -550,6 +598,8 @@ int Sqlitetestwalreplication_Init(Tcl_Interp *interp){
           test_wal_replication_follower,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_none",
           test_wal_replication_none,0,0);
+  Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_checkpoint",
+          test_wal_replication_checkpoint,0,0);
   return TCL_OK;
 }
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
