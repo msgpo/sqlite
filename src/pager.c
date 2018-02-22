@@ -8046,6 +8046,29 @@ int sqlite3PagerWalReplicationUndo(Pager *pPager){
   }
   return rc;
 }
+
+/*
+** Checkpoint a replicated WAL.
+*/
+int sqlite3PagerWalReplicationCheckpoint(
+  Pager *pPager,
+  sqlite3 *db,
+  int eMode,
+  int *pnLog,
+  int *pnCkpt
+){
+  /* Make sure we are in follower replication mode */
+  if( pPager->bWalReplicationFollower!=1 ){
+    return SQLITE_ERROR;
+  }
+
+  return sqlite3WalCheckpoint(pPager->pWal, db, eMode,
+      (eMode==SQLITE_CHECKPOINT_PASSIVE ? 0 : pPager->xBusyHandler),
+      pPager->pBusyHandlerArg,
+      pPager->walSyncFlags, pPager->pageSize, (u8 *)pPager->pTmpSpace,
+      pnLog, pnCkpt
+  );
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 #endif /* !SQLITE_OMIT_WAL */
 
