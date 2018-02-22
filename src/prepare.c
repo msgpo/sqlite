@@ -564,6 +564,24 @@ static int sqlite3Prepare(
     Btree *pBt = db->aDb[i].pBt;
     if( pBt ){
       assert( sqlite3BtreeHoldsMutex(pBt) );
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+       /* Check that the connection is not in follower WAL replication mode */
+      Pager *pPager = sqlite3BtreePager(pBt);
+      if (sqlite3PagerGetJournalMode(pPager) == PAGER_JOURNALMODE_WAL) {
+        int rc2;
+        int bEnabled;
+        sqlite3_wal_replication *pReplication;
+        rc = sqlite3PagerWalReplicationGet(pPager, &bEnabled, &pReplication);
+        assert( rc==SQLITE_OK );
+        if( bEnabled && !pReplication ){
+	  rc = SQLITE_ERROR;
+          const char *zDb = db->aDb[i].zDbSName;
+          sqlite3ErrorWithMsg(
+              db, rc, "database is in follower replication mode: %s", zDb);
+          goto end_prepare;
+	}
+      }
+#endif /* SQLITE_ENABLE_WAL_REPLICATION && !SQLITE_OMIT_WAL */
       rc = sqlite3BtreeSchemaLocked(pBt);
       if( rc ){
         const char *zDb = db->aDb[i].zDbSName;
