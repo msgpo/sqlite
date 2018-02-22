@@ -3277,7 +3277,7 @@ static int pagerWalFrames(
       for(p=pList; p; p=p->pDirty){
         aFrame->pBuf = p->pData;
         aFrame->pgno = p->pgno;
-        aFrame += 1;
+        aFrame++;
       }
       aFrame -= nList;
       rc = pPager->pWalReplication->xFrames(
@@ -7995,9 +7995,7 @@ int sqlite3PagerWalReplicationFrames(
   int rc;
   int changed;
   int i;
-  unsigned *pNextPgno;
-  void *pNextPage;
-  PgHdr* pPgHdr;
+  PgHdr* pList;
 
   /* Make sure we are in follower WAL replication mode */
   if( pPager->bWalReplicationFollower!=1 ){
@@ -8022,32 +8020,27 @@ int sqlite3PagerWalReplicationFrames(
 
   /* Create a buffer of nList page headers and link them together
   ** using the PgHdr->pDirty pointer. */
-  pNextPgno = aPgno;
-  pNextPage = aPage;
-  pPgHdr = (PgHdr*)sqlite3_malloc(sizeof(PgHdr) * (nFrame));
-  if( pPgHdr==0 ){
+  pList = (PgHdr*)sqlite3_malloc(sizeof(PgHdr) * (nFrame));
+  if( pList==0 ){
     return SQLITE_NOMEM_BKPT;
   }
   for (i=0; i<nFrame; i++) {
     /* Initialize only the PgHdr fields that matter for sqlite3WalFrames, namely
     ** pData, pDirty, pgno and flags. */
-    pPgHdr->pData = pNextPage;
-    pPgHdr->pDirty = i==nFrame-1 ? 0 : pPgHdr + 1;
-    pPgHdr->pgno = *pNextPgno;
-    pPgHdr->flags = 0;
-
-    pNextPgno += 1;
-    pNextPage += 1;
-    pPgHdr += 1;
+    pList->pData = aPage + (pPager->pageSize * i);
+    pList->pDirty = i==nFrame-1 ? 0 : pList + 1;
+    pList->pgno = aPgno[i];
+    pList->flags = 0;
+    pList++;
   }
-  pPgHdr -= nFrame;
+  pList -= nFrame;
 
   /* Write the frames */
   rc = sqlite3WalFrames(pPager->pWal,
-      pPager->pageSize, pPgHdr, nTruncate, isCommit, pPager->walSyncFlags);
+      pPager->pageSize, pList, nTruncate, isCommit, pPager->walSyncFlags);
 
   /* Free the page headers buffer */
-  sqlite3_free(pPgHdr);
+  sqlite3_free(pList);
 
   /* If the commit flag is on, also finalize the transaction */
   if( rc==SQLITE_OK && isCommit ){
