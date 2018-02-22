@@ -214,6 +214,13 @@ do_test 3.7.2 {
   }
 } {1}
 
+# Test that checkpoint-on-close is disabled for leader connections.
+#
+do_test 3.8 {
+  db close
+  file exists test.db-wal
+} {1}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-4.* - focus on testing the
 # implementation of the sqlite3_wal_replication_follower() interface.
@@ -270,6 +277,13 @@ do_test 4.6 {
   sqlite3 db2 test2.db
   list [catch {sqlite3_backup B db2 main db main} msg] $msg
 } {1 {sqlite3_backup_init() failed}}
+
+# Test that checkpoint-on-close is disabled for follower connections.
+#
+do_test 4.7 {
+  db close
+  file exists test.db-wal
+} {1}
 
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-5.* - focus on testing the
