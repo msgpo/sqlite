@@ -2717,6 +2717,52 @@ int sqlite3_wal_replication_undo(sqlite3 *db, const char *zSchema){
   return SQLITE_ERROR;
 #endif /* SQLITE_OMIT_WAL */
 }
+
+/*
+** Checkpoint a database in follower WAL replication mode.
+**
+** This interface must be called only on connections that have been switched
+** to follower replication mode using sqlite3_wal_replication_follower().
+*/
+int sqlite3_wal_replication_checkpoint(
+  sqlite3 *db,
+  const char *zSchema,
+  int eMode,
+  int *pnLog,
+  int *pnCkpt
+){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+  Btree *pBt;
+  Pager *pPager;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  /* Initialize the output variables to -1 in case an error occurs. */
+  if( pnLog ) *pnLog = -1;
+  if( pnCkpt ) *pnCkpt = -1;
+
+  sqlite3_mutex_enter(db->mutex);
+  pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+      sqlite3BtreeEnter(pBt);
+      pPager = sqlite3BtreePager(pBt);
+      assert( pPager );
+      rc = sqlite3PagerWalReplicationCheckpoint(
+          pPager, db, eMode, pnLog, pnCkpt);
+      sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+  return rc;
+
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 
 /*
