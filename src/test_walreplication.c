@@ -343,6 +343,41 @@ static int SQLITE_TCLAPI test_wal_replication_leader(
 }
 
 /*
+** tclcmd: sqlite3_wal_replication_follower HANDLE SCHEMA
+**
+** Enable follower WAL replication for the given connection/schema.
+*/
+static int SQLITE_TCLAPI test_wal_replication_follower(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int rc;
+  sqlite3 *db;
+  const char *zSchema;
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 3, objv, "HANDLE SCHEMA");
+    return TCL_ERROR;
+  }
+
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  zSchema = Tcl_GetString(objv[2]);
+
+  rc = sqlite3_wal_replication_follower(db, zSchema);
+
+  if( rc!=SQLITE_OK ){
+    Tcl_AppendResult(interp, sqlite3ErrName(rc), (char*)0);
+    return TCL_ERROR;
+  }
+
+  return TCL_OK;
+}
+
+/*
 ** This routine registers the custom TCL commands defined in this
 ** module.  This should be the only procedure visible from outside
 ** of this module.
@@ -358,6 +393,8 @@ int Sqlitetestwalreplication_Init(Tcl_Interp *interp){
           test_wal_replication_enabled,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_leader",
           test_wal_replication_leader,0,0);
+  Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_follower",
+          test_wal_replication_follower,0,0);
   return TCL_OK;
 }
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
