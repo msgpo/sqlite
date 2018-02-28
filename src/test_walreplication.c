@@ -125,8 +125,8 @@ static int testWalReplicationFrames(
     }
     if( rc==SQLITE_OK ){
       for(i=0; i<nFrame; i++){
-	*(aPgno + i) = (aFrame +i)->pgno;
-	memcpy(aPage+(szPage*i), (aFrame + i)->pBuf, szPage);
+	aPgno[i] = aFrame[i].pgno;
+	memcpy(aPage+(szPage*i), aFrame[i].pBuf, szPage);
       }
       rc = sqlite3_wal_replication_frames(
             testWalReplicationContext.db,
