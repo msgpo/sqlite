@@ -285,6 +285,18 @@ do_test 4.7 {
   file exists test.db-wal
 } {1}
 
+# Test that a connection that is set back to no replication after
+# follower WAL replication was enabled can perform queries again.
+#
+do_test 4.8 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_follower db main
+  sqlite3_wal_replication_none db main
+  execsql {SELECT 1}
+} {1}
+
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-5.* - focus on testing the
 # implementation of the sqlite3_wal_replication_none() interface.
