@@ -181,4 +181,58 @@ do_test 3.5 {
   list [catch {sqlite3_wal_replication_leader db main} msg] $msg
 } {1 SQLITE_ERROR}
 
+# Test that an error is returned if the connection is currently configured for
+# follower WAL replication.
+#
+do_test 3.6 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_follower db main
+  list [catch {sqlite3_wal_replication_leader db main} msg] $msg
+} {1 SQLITE_ERROR}
+
+#-------------------------------------------------------------------------
+# The following block of tests - walreplication-4.* - focus on testing the
+# implementation of the sqlite3_wal_replication_follower() interface.
+
+# Test that an error is returned if the database is not in WAL mode.
+#
+do_test 4.1 {
+  reset_db
+  execsql { PRAGMA journal_mode = DELETE }
+  list [catch {sqlite3_wal_replication_follower db main} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that an error is returned if the given schema name is invalid.
+#
+do_test 4.2 {
+  reset_db
+  list [catch {sqlite3_wal_replication_follower db garbage} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that follower WAL replication is enabled after a successful call.
+#
+do_test 4.3 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_follower db main
+  sqlite3_wal_replication_enabled db main
+} {true}
+
+# Test that trying to enable follower replication twice for the same
+# database results in an error.
+#
+do_test 4.4 {
+  list [catch {sqlite3_wal_replication_follower db main} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that an error is returned if leader WAL replication is enabled.
+#
+do_test 4.5 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_leader db main
+  list [catch {sqlite3_wal_replication_follower db main} msg] $msg
+} {1 SQLITE_ERROR}
+
 finish_test
