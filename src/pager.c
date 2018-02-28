@@ -7824,10 +7824,14 @@ int sqlite3PagerWalReplicationGet(
 */
 int sqlite3PagerWalReplicationSet(
   Pager *pPager,
+  sqlite3 *db,
   int bEnable,                           /* True to enable WAL replication */
   sqlite3_wal_replication *pReplication, /* Leader WAL replication */
   void *pArg                             /* Leader WAL replication argument */
 ){
+  u8 *pTmp;
+  int rc = SQLITE_OK;
+
   /* Valid input */
   assert( pPager );
   assert( bEnable==0 || bEnable==1 );
@@ -7860,17 +7864,40 @@ int sqlite3PagerWalReplicationSet(
     pPager->bWalReplicationFollower = pReplication == 0;
     pPager->pWalReplication = pReplication;
     pPager->pWalReplicationArg = pArg;
+
+    /* In follower mode we also need to manually open the WAL, since it
+    ** won't happen as consequence of regular pager operations.
+    */
+    if( pPager->bWalReplicationFollower && !pPager->pWal ){
+      rc = sqlite3WalOpen(pPager->pVfs,
+        pPager->fd, pPager->zWal, pPager->exclusiveMode,
+        pPager->journalSizeLimit, &pPager->pWal
+      );
+    }
   }else{
     /* We require WAL replication to be currently enabled */
     if( pPager->pWalReplication==0 && pPager->bWalReplicationFollower==0 ){
       return SQLITE_ERROR;
     }
+
+    /* In follower mode we also need to manually close the WAL, since it
+    ** won't happen as consequence of regular pager operations.
+    */
+    if( pPager->bWalReplicationFollower ){
+      assert( pPager->pWal );
+      pTmp = (u8 *)pPager->pTmpSpace;
+      sqlite3WalClose(pPager->pWal, db, pPager->walSyncFlags, pPager->pageSize,
+          (db && (db->flags & SQLITE_NoCkptOnClose) ? 0 : pTmp)
+      );
+      pPager->pWal = 0;
+    }
+
     pPager->bWalReplicationFollower = 0;
     pPager->pWalReplication = 0;
     pPager->pWalReplicationArg = 0;
   }
 
-  return SQLITE_OK;
+  return rc;
 }
 
 /*
