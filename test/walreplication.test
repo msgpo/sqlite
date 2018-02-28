@@ -22,6 +22,14 @@ proc sqlite3_wal {args} {
   [lindex $args 0] eval { PRAGMA journal_mode = wal }
 }
 
+proc reset_db2 {} {
+  catch {db2 close}
+  forcedelete test2.db
+  forcedelete test2.db-journal
+  forcedelete test2.db-wal
+  sqlite3 db2 ./test2.db
+}
+
 #----------------------------------------------------------------------------
 # The following block of tests - walreplication-1.* - focus on testing the
 # implementation of the sqlite3_wal_replication_find(),
@@ -345,5 +353,97 @@ do_test 5.5 {
   sqlite3_wal_replication_none db main
   sqlite3_wal_replication_enabled db main
 } {false}
+
+#-------------------------------------------------------------------------
+# The following block of tests - walreplication-6.* - focus on testing the
+# implementation of the sqlite3_replication_frames() and
+# sqlite3_replication_undo() interfaces, by running them against follower
+# connection using the test WAL replication implementation.
+
+# Test that replicated transactions work transparently from the leader
+# connection user's point of view, and that WAL frames are replicated to
+# the leader connection.
+#
+do_test 6.1.1 {
+  reset_db
+  reset_db2
+  sqlite3_wal db
+  sqlite3_wal db2
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_follower db2 main
+  execsql {
+    CREATE TABLE test (n INT);
+    INSERT INTO test(n) VALUES(1);
+    SELECT n FROM test;
+  }
+} {1}
+do_test 6.1.2 {
+  db close
+  db2 close
+
+  # checkpoint-on-close is disabled for both leader and follower
+  # connections
+  file exists test.db-wal
+  file exists test2.db-wal
+
+  # the content of the WAL is replicated to the follower
+  # connection
+  #
+  set size1 [file size test.db-wal]
+  set size2 [file size test2.db-wal]
+
+  expr {$size1 > 0 && $size1 == $size2 }
+} {1}
+do_test 6.1.3 {
+  # the replicated database contains the expected data
+  sqlite3 db ./test2.db
+  execsql { SELECT n FROM test }
+} {1}
+
+# Test that rolling back a transaction reverts the changes in the
+# follower database as well.
+#
+do_test 6.2.1 {
+  reset_db
+  reset_db2
+  sqlite3_wal db
+  sqlite3_wal db2
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_follower db2 main
+
+  # Reduce the cache size, so the write transaction below will
+  # have to flush pages and the test replication implementation
+  # will call sqlite3_replication_undo upon rollback.
+  execsql { PRAGMA cache_size = 1}
+
+  execsql {
+    CREATE TABLE test (a TEXT);
+    BEGIN;
+    INSERT INTO test VALUES(randomblob(4000));
+    ROLLBACK;
+  }
+} {}
+do_test 6.2.2 {
+  db close
+  db2 close
+
+  # checkpoint-on-close is disabled for both leader and follower
+  # connections
+  file exists test.db-wal
+  file exists test2.db-wal
+
+  # the content of the WAL is replicated to the follower
+  # connection
+  #
+  set size1 [file size test.db-wal]
+  set size2 [file size test2.db-wal]
+
+  expr {$size1 > 0 && $size1 == $size2 }
+} {1}
+do_test 6.2.3 {
+  # the replicated database was rolled back as well
+  sqlite3 db ./test2.db
+  execsql { SELECT COUNT(a) FROM TEST }
+} {0}
 
 finish_test
