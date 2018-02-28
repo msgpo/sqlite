@@ -7761,6 +7761,10 @@ int sqlite3PagerWalReplicationGet(
 ** transaction. The given pArg will be passed back when invoking the hooks
 ** defined in the pReplication implementation.
 **
+** If the bEnable flag is 1 and pReplication is NULL, then enable follower WAL
+** replication. This pager will be expected to be used only for replicating WAL
+** events broadcasted by another pager in leader WAL replication mode.
+**
 ** If the bEnabled flag is 1 and WAL replication is already enabled on this
 ** pager (either leader or follower WAL replication), an error is returned.
 */
