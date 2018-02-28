@@ -9041,6 +9041,35 @@ SQLITE_EXPERIMENTAL int sqlite3_wal_replication_leader(
 );
 
 /*
+** CAPI3REF: Enable follower WAL replication on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_follower(D,S)] interface enables follower
+** write-ahead log replication on schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_follower()] interface returns SQLITE_OK on
+** success or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_follower(D,S)]
+** requires that the database file for schema S is in [WAL mode], and that no
+** WAL replication is currently enabled for schema S of connection D.
+**
+** After the call returns, follower WAL replication will be enabled for this
+** connection. A [sqlite3_wal_replication] implementation configured on another
+** SQLite node should be in charge of "driving" the lifecycle of this
+** connection's WAL. The typical implementation will broadcast to follower
+** SQLite nodes all WAL events received by a leader connection, and wait for a
+** quorum before returning from the relevant WAL hooks (write frames, undo).
+**
+** The [sqlite3_wal_replication_follower()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_follower(
+  sqlite3 *db,                      /* Database handle */
+  const char *zSchema               /* Name of attached database (or NULL) */
+);
+
+/*
 ** Undo the hack that converts floating point types to integer for
 ** builds on processors without floating point support.
 */
