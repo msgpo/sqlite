@@ -2478,7 +2478,7 @@ int sqlite3_wal_replication_leader(
       sqlite3BtreeEnter(pBt);
       Pager *pPager = sqlite3BtreePager(pBt);
       assert( pPager );
-      rc = sqlite3PagerWalReplicationSet(pPager, 1, pReplication, pArg);
+      rc = sqlite3PagerWalReplicationSet(pPager, db, 1, pReplication, pArg);
       if( rc==SQLITE_OK ) {
         /* Disable checkpointing the WAL on close, since the replication
         ** implementation should take care of checkpointing explicitly.
@@ -2515,7 +2515,7 @@ int sqlite3_wal_replication_follower(sqlite3 *db, const char *zSchema){
       sqlite3BtreeEnter(pBt);
       Pager *pPager = sqlite3BtreePager(pBt);
       assert( pPager );
-      rc = sqlite3PagerWalReplicationSet(pPager, 1, 0, 0);
+      rc = sqlite3PagerWalReplicationSet(pPager, db, 1, 0, 0);
       if( rc==SQLITE_OK ){
 	/* Disable checkpointing the WAL on close, since the replication
 	** implementation should take care of checkpointing explicitly. */
@@ -2559,7 +2559,7 @@ int sqlite3_wal_replication_none(sqlite3 *db, const char *zSchema){
       sqlite3BtreeEnter(pBt);
       Pager *pPager = sqlite3BtreePager(pBt);
       assert( pPager );
-      rc = sqlite3PagerWalReplicationSet(pPager, 0, 0, 0);
+      rc = sqlite3PagerWalReplicationSet(pPager, db, 0, 0, 0);
       sqlite3BtreeLeave(pBt);
   }
   sqlite3_mutex_leave(db->mutex);
