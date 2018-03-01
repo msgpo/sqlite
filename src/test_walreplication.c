@@ -46,6 +46,8 @@ extern int getDbPointer(Tcl_Interp *, const char *, sqlite3 **);
 typedef struct testWalReplicationContextType testWalReplicationContextType;
 struct testWalReplicationContextType {
   int eState;          /* Replication state (IDLE, PENDING, WRITING, etc) */
+  int eFailing;        /* Code of a method that should fail when triggered */
+  int rc;              /* If non-zero, the eFailing method will error */
   sqlite3 *db;         /* Follower connection */
   const char *zSchema; /* Follower schema name */
 };
@@ -58,6 +60,11 @@ static testWalReplicationContextType testWalReplicationContext;
 #define STATE_UNDONE    4
 #define STATE_ERROR     5
 
+#define FAILING_BEGIN  1
+#define FAILING_FRAMES 2
+#define FAILING_UNDO   3
+#define FAILING_END    4
+
 /*
 ** A version of sqlite3_wal_replication.xBegin() that transitions the global
 ** replication context state to STATE_PENDING.
@@ -65,12 +72,18 @@ static testWalReplicationContextType testWalReplicationContext;
 static int testWalReplicationBegin(
   sqlite3_wal_replication *pReplication, void *pArg
 ){
+  int rc = SQLITE_OK;
   assert( pArg==&testWalReplicationContext );
   assert( testWalReplicationContext.eState==STATE_IDLE
        || testWalReplicationContext.eState==STATE_ERROR
   );
-  testWalReplicationContext.eState = STATE_PENDING;
-  return 0;
+  if( testWalReplicationContext.eFailing==FAILING_BEGIN ){
+    rc = testWalReplicationContext.rc;
+  }
+  if( rc==SQLITE_OK ){
+    testWalReplicationContext.eState = STATE_PENDING;
+  }
+  return rc;
 }
 
 /*
@@ -107,7 +120,9 @@ static int testWalReplicationFrames(
     ** first batch of frames of a new transaction. */
     isBegin = 1;
   }
-  if( testWalReplicationContext.db ){
+  if( testWalReplicationContext.eFailing==FAILING_FRAMES ){
+    rc = testWalReplicationContext.rc;
+  }else if( testWalReplicationContext.db ){
     unsigned *aPgno;
     void *aPage;
     int i;
@@ -163,8 +178,10 @@ static int testWalReplicationUndo(
        || testWalReplicationContext.eState==STATE_WRITING
        || testWalReplicationContext.eState==STATE_ERROR
   );
-  if( testWalReplicationContext.db
-   && testWalReplicationContext.eState==STATE_WRITING ){
+  if( testWalReplicationContext.eFailing==FAILING_UNDO ){
+    rc = testWalReplicationContext.rc;
+  }else if( testWalReplicationContext.db
+         && testWalReplicationContext.eState==STATE_WRITING ){
     rc = sqlite3_wal_replication_undo(
         testWalReplicationContext.db,
         testWalReplicationContext.zSchema
@@ -183,13 +200,17 @@ static int testWalReplicationUndo(
 static int testWalReplicationEnd(
   sqlite3_wal_replication *pReplication, void *pArg
 ){
+  int rc = SQLITE_OK;
   assert( pArg==&testWalReplicationContext );
   assert( testWalReplicationContext.eState==STATE_PENDING
        || testWalReplicationContext.eState==STATE_COMMITTED
        || testWalReplicationContext.eState==STATE_UNDONE
   );
   testWalReplicationContext.eState = STATE_IDLE;
-  return 0;
+  if( testWalReplicationContext.eFailing==FAILING_END ){
+    rc = testWalReplicationContext.rc;
+  }
+  return rc;
 }
 
 /*
@@ -347,6 +368,60 @@ static int SQLITE_TCLAPI test_wal_replication_unregister(
 }
 
 /*
+** tclcmd: sqlite3_wal_replication_error METHOD ERROR
+**
+** Make the given method of test WAL replication implementation fail with the
+** given error.
+*/
+static int SQLITE_TCLAPI test_wal_replication_error(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  const char *zMethod;
+  const char *zError;
+  int eFailing;
+  int rc;
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 3, objv, "METHOD ERROR");
+    return TCL_ERROR;
+  }
+
+  /* Failing method */
+  zMethod = Tcl_GetString(objv[1]);
+  if( strcmp(zMethod, "xBegin")==0 ){
+    eFailing = FAILING_BEGIN;
+  }else if( strcmp(zMethod, "xFrames")==0 ){
+    eFailing = FAILING_FRAMES;
+  }else if( strcmp(zMethod, "xUndo")==0 ){
+    eFailing = FAILING_UNDO;
+  }else if( strcmp(zMethod, "xEnd")==0 ){
+    eFailing = FAILING_END;
+  }else{
+    Tcl_AppendResult(interp, "unknown WAL replication method", (char*)0);
+    return TCL_ERROR;
+  }
+
+  /* Error code */
+  zError = Tcl_GetString(objv[2]);
+  if( strcmp(zError, "NOT_LEADER")==0 ){
+    rc = SQLITE_IOERR_NOT_LEADER;
+  }else if( strcmp(zError, "LEADERSHIP_LOST")==0 ){
+    rc = SQLITE_IOERR_LEADERSHIP_LOST;
+  }else{
+    Tcl_AppendResult(interp, "unknown error", (char*)0);
+    return TCL_ERROR;
+  }
+
+  testWalReplicationContext.eFailing = eFailing;
+  testWalReplicationContext.rc = rc;
+  
+  return TCL_OK;
+}
+
+/*
 ** tclcmd: sqlite3_wal_replication_enabled HANDLE SCHEMA
 **
 ** Return "true" if WAL replication is enabled on the given database, "false"
@@ -442,6 +517,8 @@ static int SQLITE_TCLAPI test_wal_replication_leader(
 
   /* Reset any previous global context state */
   testWalReplicationContext.eState = STATE_IDLE;
+  testWalReplicationContext.eFailing = 0;
+  testWalReplicationContext.rc = 0;
   testWalReplicationContext.db = 0;
   testWalReplicationContext.zSchema = 0;
 
@@ -590,6 +667,8 @@ int Sqlitetestwalreplication_Init(Tcl_Interp *interp){
           test_wal_replication_register,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_unregister",
           test_wal_replication_unregister,0,0);
+  Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_error",
+          test_wal_replication_error,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_enabled",
           test_wal_replication_enabled,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_leader",
