@@ -450,6 +450,80 @@ do_test 6.2.3 {
   execsql { SELECT COUNT(a) FROM TEST }
 } {0}
 
+# Test that if the xBegin or xFrame method returns a replication error,
+# then the transaction fails.
+#
+foreach { i method error } {
+1 xBegin  NOT_LEADER
+2 xBegin  LEADERSHIP_LOST
+3 xFrames NOT_LEADER
+4 xFrames LEADERSHIP_LOST
+} {
+  do_test 6.3.$i {
+    reset_db
+    sqlite3_wal db
+    sqlite3_wal_replication_leader db main
+    sqlite3_wal_replication_error $method $error
+    list [catch {db eval {CREATE TABLE test (n INT)}} msg] $msg
+  } {1 {disk I/O error}}
+}
+
+# Test that if the pager fails to begin a WAL write transaction,
+# the xAbort method is fired.
+#
+do_test 6.4.1 {
+  reset_db
+  sqlite3_wal db
+  execsql {
+    CREATE TABLE test (n INT);
+  }
+  sqlite3_wal_replication_leader db main
+  sqlite3 db2 ./test.db
+  db2 eval {
+    BEGIN;
+    INSERT INTO test VALUES(1);
+  }
+
+  # Trying to start a write transaction now fails with
+  # SQLITE_BUSY, and should trigger the xAbort hook.
+  list [catch {db eval {
+    BEGIN;
+    INSERT INTO test VALUES(2);
+  }} msg] $msg
+} {1 {database is locked}}
+do_test 6.4.2 {
+  db eval { ROLLBACK }
+  db2 eval { COMMIT; }
+
+  # Re-trying the failed insert succeeds, as the xAbort
+  # method has reset the state of the global replication.
+  execsql {
+    BEGIN;
+    INSERT INTO test VALUES(2);
+    COMMIT;
+  }
+} {}
+
+# Test that if the xUndo method returns a replication error, the
+# rollback still succeeds.
+#
+foreach { i method error } {
+1 xUndo  NOT_LEADER
+2 xUndo  LEADERSHIP_LOST
+} {
+  do_test 6.5.$i {
+    reset_db
+    sqlite3_wal db
+    sqlite3_wal_replication_leader db main
+    sqlite3_wal_replication_error $method $error
+    execsql {
+      BEGIN;
+      CREATE TABLE test (n INT);
+      ROLLBACK;
+    }
+  } {}
+}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-7.* - focus on testing the
 # implementation of the sqlite3_wal_replication_checkpoint() interface.
