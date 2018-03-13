@@ -524,6 +524,22 @@ foreach { i method error } {
   } {}
 }
 
+# Test that read transactions don't trigger any WAL replication method.
+#
+do_test 6.7 {
+  reset_db
+  sqlite3_wal db
+  execsql {
+    CREATE TABLE test (n INT);
+    INSERT INTO test(n) VALUES(1);
+  }
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_error xBegin NOT_LEADER
+  execsql {
+    SELECT n FROM test;
+  }
+} {1}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-7.* - focus on testing the
 # implementation of the sqlite3_wal_replication_checkpoint() interface.
