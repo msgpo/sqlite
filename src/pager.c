@@ -2132,6 +2132,16 @@ static int pager_end_transaction(Pager *pPager, int hasMaster, int bCommit){
   }
 
   if( pagerUseWal(pPager) ){
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+    if( pPager->pWalReplication ){
+      /* Fire the xEnd method of the configured replication interface. The
+      ** method implementation will typically use it to update its internal
+      ** state. The return code is currently ignored. */
+      assert( pPager->pWalReplication->xEnd );
+      pPager->pWalReplication->xEnd(
+          pPager->pWalReplication, pPager->pWalReplicationArg);
+    }
+#endif /* SQLITE_ENABLE_WAL_REPLICATION && !SQLITE_OMIT_WAL */
     /* Drop the WAL write-lock, if any. Also, if the connection was in 
     ** locking_mode=exclusive mode but is no longer, drop the EXCLUSIVE 
     ** lock held on the database file.
