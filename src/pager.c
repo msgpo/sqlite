@@ -2141,6 +2141,16 @@ static int pager_end_transaction(Pager *pPager, int hasMaster, int bCommit){
     */
     rc2 = sqlite3WalEndWriteTransaction(pPager->pWal);
     assert( rc2==SQLITE_OK );
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+    if( pPager->pWalReplication ){
+      /* Fire the xEnd method of the configured replication interface. The
+      ** method implementation will typically use it to update its internal
+      ** state. The return code is currently ignored. */
+      assert( pPager->pWalReplication->xEnd );
+      pPager->pWalReplication->xEnd(
+          pPager->pWalReplication, pPager->pWalReplicationArg);
+    }
+#endif /* SQLITE_ENABLE_WAL_REPLICATION && !SQLITE_OMIT_WAL */
   }else if( rc==SQLITE_OK && bCommit && pPager->dbFileSize>pPager->dbSize ){
     /* This branch is taken when committing a transaction in rollback-journal
     ** mode if the database file on disk is larger than the database image.
