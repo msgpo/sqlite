@@ -5878,6 +5878,18 @@ int sqlite3PagerBegin(Pager *pPager, int exFlag, int subjInMemory){
         ** holds the write-lock. If possible, the upper layer will call it.
         */
         rc = sqlite3WalBeginWriteTransaction(pPager->pWal);
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+        if( rc!=SQLITE_OK && pPager->pWalReplication ){
+          /* Fire the xAbort hook of the configured replication interface. The
+          ** hook implementation logic should typically cleanup any state that
+          ** was set in the xBegin hook. The return code of xAbort is currently
+          ** ignored.
+          */
+          assert( pPager->pWalReplication->xAbort );
+          pPager->pWalReplication->xAbort(
+              pPager->pWalReplication, pPager->pWalReplicationArg);
+        }
+#endif /* SQLITE_ENABLE_WAL_REPLICATION && !SQLITE_OMIT_WAL */
       }
     }else{
       /* Obtain a RESERVED lock on the database file. If the exFlag parameter
