@@ -540,6 +540,100 @@ do_test 6.7 {
   }
 } {1}
 
+# Test that the WAL write lock is never acquired if the xBegin replication
+# method fails with SQLITE_IOERR_LEADERSHIP_LOST, and the transaction is
+# automatically rolled back as it normally happens whenever sqlite3PagerBegin
+# returns SQLITE_IOERR.
+#
+do_test 6.8.1 {
+  reset_db
+  sqlite3_wal db
+  execsql {
+    CREATE TABLE test (n INT);
+  }
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_error xBegin LEADERSHIP_LOST 1
+  list [catch {db eval {
+    BEGIN;
+    INSERT INTO test VALUES(1);
+  }} msg] $msg
+} {1 {disk I/O error}}
+do_test 6.8.2 {
+  # No need to rollback here.
+  execsql {
+    BEGIN;
+    INSERT INTO test VALUES(1);
+    COMMIT;
+  }
+  execsql {
+    SELECT n FROM test;
+  }
+} {1}
+
+# Test that if the xFrames method fails, a new transaction can be executed
+# afterwise.
+#
+do_test 6.9.1 {
+  reset_db
+  sqlite3_wal db
+  execsql {
+    CREATE TABLE test (n INT);
+  }
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_error xFrames LEADERSHIP_LOST 1
+  list [catch {db eval {
+    BEGIN;
+    INSERT INTO test VALUES(1);
+    COMMIT;
+  }} msg] $msg
+} {1 {disk I/O error}}
+do_test 6.9.2 {
+  execsql {
+    BEGIN;
+    INSERT INTO test VALUES(1);
+    COMMIT;
+  }
+  execsql {
+    SELECT n FROM test;
+  }
+} {1}
+
+# Test that if the xFrames method fails in the context of a pagerStress call, a
+# new transaction can be executed afterwise.
+#
+do_test 6.10.1 {
+  reset_db
+  sqlite3_wal db
+  execsql {
+    CREATE TABLE test (a TEXT);
+  }
+
+  # Reduce the cache size, so the write transaction below will
+  # have to flush pages and call xFrames before the transaction
+  # is committed.
+  execsql { PRAGMA cache_size = 1}
+
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_error xFrames LEADERSHIP_LOST 1
+
+  # The insert will fail due to the pcache failing to spill dirty pages, and
+  # the transaction is automatically rolled back.
+  list [catch {db eval {
+    BEGIN;
+    INSERT INTO test VALUES(randomblob(4000));
+  }} msg] $msg
+} {1 {disk I/O error}}
+do_test 6.10.2 {
+  execsql {
+    BEGIN;
+    INSERT INTO test VALUES('x');
+    COMMIT;
+  }
+  execsql {
+    SELECT a FROM test;
+  }
+} {x}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-7.* - focus on testing the
 # implementation of the sqlite3_wal_replication_checkpoint() interface.
