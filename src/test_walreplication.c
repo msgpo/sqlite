@@ -48,6 +48,7 @@ struct testWalReplicationContextType {
   int eState;          /* Replication state (IDLE, PENDING, WRITING, etc) */
   int eFailing;        /* Code of a method that should fail when triggered */
   int rc;              /* If non-zero, the eFailing method will error */
+  int iFailures;       /* Number of times the eFailing method will error */
   sqlite3 *db;         /* Follower connection */
   const char *zSchema; /* Follower schema name */
 };
@@ -77,8 +78,11 @@ static int testWalReplicationBegin(
   assert( testWalReplicationContext.eState==STATE_IDLE
        || testWalReplicationContext.eState==STATE_ERROR
   );
-  if( testWalReplicationContext.eFailing==FAILING_BEGIN ){
+  if( testWalReplicationContext.eFailing==FAILING_BEGIN
+   && testWalReplicationContext.iFailures>0
+  ){
     rc = testWalReplicationContext.rc;
+    testWalReplicationContext.iFailures--;
   }
   if( rc==SQLITE_OK ){
     testWalReplicationContext.eState = STATE_PENDING;
@@ -120,8 +124,11 @@ static int testWalReplicationFrames(
     ** first batch of frames of a new transaction. */
     isBegin = 1;
   }
-  if( testWalReplicationContext.eFailing==FAILING_FRAMES ){
+  if( testWalReplicationContext.eFailing==FAILING_FRAMES
+   && testWalReplicationContext.iFailures>0
+  ){
     rc = testWalReplicationContext.rc;
+    testWalReplicationContext.iFailures--;
   }else if( testWalReplicationContext.db ){
     unsigned *aPgno;
     void *aPage;
@@ -178,8 +185,11 @@ static int testWalReplicationUndo(
        || testWalReplicationContext.eState==STATE_WRITING
        || testWalReplicationContext.eState==STATE_ERROR
   );
-  if( testWalReplicationContext.eFailing==FAILING_UNDO ){
+  if( testWalReplicationContext.eFailing==FAILING_UNDO
+   && testWalReplicationContext.iFailures>0
+  ){
     rc = testWalReplicationContext.rc;
+    testWalReplicationContext.iFailures--;
   }else if( testWalReplicationContext.db
          && testWalReplicationContext.eState==STATE_WRITING ){
     rc = sqlite3_wal_replication_undo(
@@ -207,8 +217,11 @@ static int testWalReplicationEnd(
        || testWalReplicationContext.eState==STATE_UNDONE
   );
   testWalReplicationContext.eState = STATE_IDLE;
-  if( testWalReplicationContext.eFailing==FAILING_END ){
+  if( testWalReplicationContext.eFailing==FAILING_END
+   && testWalReplicationContext.iFailures>0
+  ){
     rc = testWalReplicationContext.rc;
+    testWalReplicationContext.iFailures--;
   }
   return rc;
 }
@@ -368,10 +381,11 @@ static int SQLITE_TCLAPI test_wal_replication_unregister(
 }
 
 /*
-** tclcmd: sqlite3_wal_replication_error METHOD ERROR
+** tclcmd: sqlite3_wal_replication_error METHOD ERROR ?N?
 **
 ** Make the given method of test WAL replication implementation fail with the
-** given error.
+** given error. If N is given, fail only that amount of time and start
+** succeeding again afterwise.
 */
 static int SQLITE_TCLAPI test_wal_replication_error(
   void * clientData,
@@ -383,9 +397,10 @@ static int SQLITE_TCLAPI test_wal_replication_error(
   const char *zError;
   int eFailing;
   int rc;
+  int iFailures;
 
-  if( objc!=3 ){
-    Tcl_WrongNumArgs(interp, 3, objv, "METHOD ERROR");
+  if( objc!=3 && objc!=4 ){
+    Tcl_WrongNumArgs(interp, 3, objv, "METHOD ERROR ?N?");
     return TCL_ERROR;
   }
 
@@ -417,6 +432,12 @@ static int SQLITE_TCLAPI test_wal_replication_error(
 
   testWalReplicationContext.eFailing = eFailing;
   testWalReplicationContext.rc = rc;
+
+  /* Number of failures */
+  if( objc==4 ){
+    if( Tcl_GetIntFromObj(interp, objv[3], &iFailures) ) return TCL_ERROR;
+    testWalReplicationContext.iFailures = iFailures;
+  }
   
   return TCL_OK;
 }
@@ -519,6 +540,7 @@ static int SQLITE_TCLAPI test_wal_replication_leader(
   testWalReplicationContext.eState = STATE_IDLE;
   testWalReplicationContext.eFailing = 0;
   testWalReplicationContext.rc = 0;
+  testWalReplicationContext.iFailures = 8192; /* Effetively infinite */
   testWalReplicationContext.db = 0;
   testWalReplicationContext.zSchema = 0;
 
