@@ -9180,6 +9180,52 @@ typedef struct sqlite3_wal_replication {
 } sqlite3_wal_replication;
 
 /*
+** CAPI3REF: Write-Ahead Log Replication Objects
+** EXPERIMENTAL
+**
+** A WAL replication is an [sqlite3_wal_replication] object that third-party
+** libraries can use to synchronously replicate the [write-ahed log] of a
+** database across a cluster of SQLite nodes.
+**
+** The sqlite3_wal_replication_find() interface returns a pointer to a WAL
+** replication implementation given its name (names are case sensitive
+** zero-terminated UTF-8 strings).
+**
+** If there is no match, a NULL pointer is returned.
+**
+** If zReplication is NULL then the default WAL replication implementation is
+** returned, or NULL if none is registered.
+**
+** New WAL replication implementations are registered with
+** sqlite3_wal_replication_register(). Each new WAL replication implementation
+** becomes the default one if the makeDflt flag is set.
+**
+** The same WAL replication implementation can be registered multiple times
+** without injury.
+**
+** To make an existing WAL replication implementation into the default one,
+** register it again with the makeDflt flag set. If two different WAL
+** replication implementations with the same name are registered, the behavior
+** is undefined.  If a WAL replication implementation is registered with a name
+** that is NULL or an empty string, then the behavior is undefined.
+**
+** Unregister a WAL replication implementation with the
+** sqlite3_wal_replication_unregister() interface (if the default WAL
+** replication implementation is unregistered, another one is arbitrarily chosen
+** as the new default).
+**
+** The sqlite3_wal_replication_find(), sqlite3_wal_replication_register() and
+** sqlite3_wal_replication_unregister() interfaces is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL sqlite3_wal_replication *sqlite3_wal_replication_find(
+  const char *zReplication);
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_register(
+  sqlite3_wal_replication *pReplication, int makeDflt);
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_unregister(
+  sqlite3_wal_replication *pReplication);
+
+/*
 ** Undo the hack that converts floating point types to integer for
 ** builds on processors without floating point support.
 */

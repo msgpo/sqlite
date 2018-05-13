@@ -2293,6 +2293,116 @@ int sqlite3Checkpoint(sqlite3 *db, int iDb, int eMode, int *pnLog, int *pnCkpt){
 }
 #endif /* SQLITE_OMIT_WAL */
 
+#ifdef SQLITE_ENABLE_WAL_REPLICATION
+/*
+** The list of all registered WAL replication implementations.
+**
+** Access to this variable is protected by SQLITE_MUTEX_STATIC_MASTER.
+*/
+static sqlite3_wal_replication *walReplicationList = 0;
+
+/*
+** Locate a WAL replication implementation by name. If no name is given, simply
+** return the first registered implementation, or NULL if no WAL replication
+** implementation is registered.
+*/
+sqlite3_wal_replication *sqlite3_wal_replication_find(const char *zReplication){
+  sqlite3_wal_replication *p = 0;
+#if SQLITE_THREADSAFE
+  sqlite3_mutex *mutex;
+#endif
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return 0;
+#endif
+#if SQLITE_THREADSAFE
+  mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+#endif
+  sqlite3_mutex_enter(mutex);
+
+  for(p=walReplicationList; p; p=p->pNext){
+    if( zReplication==0 ) break;
+    if( strcmp(zReplication, p->zName)==0 ) break;
+  }
+
+  sqlite3_mutex_leave(mutex);
+
+  return p;
+}
+
+/*
+** Unlink a WAL synchronous replication implementation from the linked list.
+*/
+static void walReplicationUnlink(sqlite3_wal_replication *pReplication){
+  assert( sqlite3_mutex_held(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER)) );
+  if( pReplication==0 ){
+    /* No-op */
+  }else if( walReplicationList==pReplication ){
+    walReplicationList = pReplication->pNext;
+  }else if( walReplicationList ){
+    sqlite3_wal_replication *p = walReplicationList;
+    while( p->pNext && p->pNext!=pReplication ){
+      p = p->pNext;
+    }
+    if( p->pNext==pReplication ){
+      p->pNext = pReplication->pNext;
+    }
+  }
+}
+
+/*
+** Register a WAL replication implementation. It is harmless to register the
+** same implementation multiple times. The new implementation becomes the
+** default if makeDflt is true.
+*/
+int sqlite3_wal_replication_register(
+  sqlite3_wal_replication *pReplication, int makeDflt){
+#ifndef SQLITE_OMIT_WAL
+  MUTEX_LOGIC( sqlite3_mutex *mutex; )
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return rc;
+#endif
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( pReplication==0 ) return SQLITE_MISUSE_BKPT;
+#endif
+
+  MUTEX_LOGIC( mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER); )
+  sqlite3_mutex_enter(mutex);
+
+  walReplicationUnlink(pReplication);
+  if( makeDflt || walReplicationList==0 ){
+    pReplication->pNext = walReplicationList;
+    walReplicationList = pReplication;
+  }else{
+    pReplication->pNext = walReplicationList->pNext;
+    walReplicationList->pNext = pReplication;
+  }
+  assert(walReplicationList);
+
+  sqlite3_mutex_leave(mutex);
+
+  return SQLITE_OK;
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
+
+/*
+** Unregister a WAL replication implementation so that it is no longer
+** accessible.
+*/
+int sqlite3_wal_replication_unregister(sqlite3_wal_replication *pReplication){
+#if SQLITE_THREADSAFE
+  sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+#endif
+  sqlite3_mutex_enter(mutex);
+  walReplicationUnlink(pReplication);
+  sqlite3_mutex_leave(mutex);
+  return SQLITE_OK;
+}
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
+
 /*
 ** This function returns true if main-memory should be used instead of
 ** a temporary file for transient pager files and statement journals.
