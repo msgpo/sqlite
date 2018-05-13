@@ -914,6 +914,7 @@ enable_update_limit
 enable_geopoly
 enable_rtree
 enable_session
+enable_wal_replication
 enable_gcov
 '
       ac_precious_vars='build_alias
@@ -1567,6 +1568,8 @@ Optional Features:
   --enable-geopoly        Enable the GEOPOLY extension
   --enable-rtree          Enable the RTREE extension
   --enable-session        Enable the SESSION extension
+  --enable-wal-replication
+                          Enable WAL replication support
   --enable-gcov           Enable coverage testing using gcov
 
 Optional Packages:
@@ -11647,6 +11650,19 @@ fi
 if test "${enable_session}" = "yes" ; then
   OPT_FEATURE_FLAGS="${OPT_FEATURE_FLAGS} -DSQLITE_ENABLE_SESSION"
   OPT_FEATURE_FLAGS="${OPT_FEATURE_FLAGS} -DSQLITE_ENABLE_PREUPDATE_HOOK"
+fi
+
+#########
+# See whether we should enable WAL replication support
+# Check whether --enable-wal-replication was given.
+if test "${enable_wal_replication+set}" = set; then :
+  enableval=$enable_wal_replication; enable_wal_replication=yes
+else
+  enable_wal_replication=no
+fi
+
+if test "${enable_wal_replication}" = "yes" ; then
+  OPT_FEATURE_FLAGS="${OPT_FEATURE_FLAGS} -DSQLITE_ENABLE_WAL_REPLICATION"
 fi
 
 #########
