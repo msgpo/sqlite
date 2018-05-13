@@ -9274,6 +9274,51 @@ int sqlite3_deserialize(
 #define SQLITE_DESERIALIZE_READONLY    4 /* Database is read-only */
 
 /*
+** CAPI3REF: Write-Ahead Log Replication Frame Object
+** EXPERIMENTAL
+**
+** The sqlite3_wal_replication_frame object represents a new frame about to be
+** appended to the write-ahead log of a [WAL mode] database.
+**
+** When an implementation for the WAL replication interface is provided (using
+** [sqlite3_wal_replication_register]) and [sqlite3_wal_replication_leader]
+** was called on a connection, passing a zReplication parameter matching the
+** registration name of that implementation, this object is used to inform the
+** replication implementation about the content of the new [write-ahead log]
+** frame.
+**
+** See [sqlite3_wal_replication] for additional information.
+*/
+typedef struct sqlite3_wal_replication_frame {
+  void *pBuf;        /* Page content of the WAL frame to be written */
+  unsigned pgno;     /* Page number */
+  unsigned iPrev;    /* Most recent frame also containing pgno, or 0 if new */
+} sqlite3_wal_replication_frame;
+
+/*
+** CAPI3REF: Write-Ahead Log Replication Object
+** EXPERIMENTAL
+**
+** An instance of this structure defines a set of write-ahead log lifecycle
+** hooks that can be used by third party libraries to replicate the
+** [write-ahead log] of a database across all SQLite instances that are part
+** of a cluster.
+*/
+typedef struct sqlite3_wal_replication sqlite3_wal_replication;
+typedef struct sqlite3_wal_replication {
+  int iVersion;                   /* Structure version number (currently 1) */
+  sqlite3_wal_replication *pNext; /* Next registered WAL sync implementation */
+  const char *zName;              /* Name of this replication implementation */
+  void *pAppData;                 /* Pointer to application-specific data */
+  int (*xBegin)(sqlite3_wal_replication*, void *pArg);
+  int (*xAbort)(sqlite3_wal_replication*, void *pArg);
+  int (*xFrames)(sqlite3_wal_replication*, void *pArg, int szPage, int nFrame,
+      sqlite3_wal_replication_frame *aFrame, unsigned nTruncate, int isCommit);
+  int (*xUndo)(sqlite3_wal_replication*, void *pArg);
+  int (*xEnd)(sqlite3_wal_replication*, void *pArg);
+} sqlite3_wal_replication;
+
+/*
 ** Undo the hack that converts floating point types to integer for
 ** builds on processors without floating point support.
 */
