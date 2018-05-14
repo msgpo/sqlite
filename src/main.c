@@ -2496,6 +2496,55 @@ int sqlite3_wal_replication_enabled(
   return SQLITE_ERROR;
 #endif /* !SQLITE_OMIT_WAL */
 }
+
+/*
+** Enable leader WAL replication on the given connection.
+**
+** The zReplication parameter must be the name of a WAL replication
+** implementation previously registered with
+** sqlite3_wal_replication_register. The replication implementation will be
+** notified of WAL lifecycle events, such as begin a write transaction, write
+** new frames to the log, undo a write transaction and end a write transaction.
+**
+** When invoking the hooks defined in the given sqlite3_wal_replication
+** implementation, SQLite will pass them the given custom argument back.
+*/
+int sqlite3_wal_replication_leader(
+  sqlite3 *db, const char *zSchema, const char *zReplication, void *pArg
+){
+#ifndef SQLITE_OMIT_WAL
+  sqlite3_wal_replication *pReplication;
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  pReplication = sqlite3_wal_replication_find(zReplication);
+
+  if( !pReplication ){
+    /* No WAL replication implementation is registered under the given name */
+    return SQLITE_ERROR;
+  }
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+      sqlite3BtreeEnter(pBt);
+      Pager *pPager = sqlite3BtreePager(pBt);
+      assert( pPager );
+      rc = sqlite3PagerWalReplicationSet(pPager, 1, pReplication, pArg);
+      sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* !SQLITE_OMIT_WAL */
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 
 /*
