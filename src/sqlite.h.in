@@ -9611,6 +9611,43 @@ SQLITE_EXPERIMENTAL int sqlite3_wal_replication_enabled(
 );
 
 /*
+** CAPI3REF: Enable leader WAL replication on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_leader(D,S,R,A)] interface enables leader
+** write-ahead log replication for schema S of [database connection] D, using
+** the WAL replication implementation registered with name R. Argument A will be
+** passed back to the methods defined by R when WAL-related events occurr on
+** this connection.
+**
+** The [sqlite3_wal_replication_leader()] interface returns SQLITE_OK on success
+** or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_leader(D,S,R,A)]
+** requires that a [sqlite3_wal_replication] implementation has been registered
+** under the name R (using the [sqlite3_wal_replication_register()] interface),
+** that the database file for schema S is in [WAL mode], and that no WAL
+** replication is currently enabled for schema S of connection D.
+**
+** After the call returns, leader WAL replication will be enabled for this
+** database and from this point on SQLite will notify the given
+** [sqlite3_wal_replication] implementation whenever a WAL event involving a
+** write transaction occurs (begin, write frames, undo, end). SQLite will block
+** on the particular [sqlite3_wal_replication] hook that was fired. The hook
+** implementation should typically broadcast the WAL-changing event to a number
+** of other nodes and wait for a quorum of them to acknowledge it.
+**
+** The [sqlite3_wal_replication_leader()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_leader(
+  sqlite3 *db,                /* Database handle */
+  const char *zSchema,        /* Name of attached database (or NULL) */
+  const char *zReplication,   /* Name of the sqlite3_wal_replication to use */
+  void *pArg                  /* Argument to pass back to replication methods */
+);
+
+/*
 ** Undo the hack that converts floating point types to integer for
 ** builds on processors without floating point support.
 */
