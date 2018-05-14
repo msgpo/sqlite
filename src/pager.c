@@ -7747,6 +7747,65 @@ int sqlite3PagerWalReplicationGet(
 
   return SQLITE_OK;
 }
+
+/*
+** Change the pager's WAL replication mode.
+**
+** If this is not a WAL database, return an error.
+**
+** If the bEnable flag is 1 and pReplication is not NULL, then enable leader WAL
+** replication. This pager will fire the various callbacks defined in the
+** sqlite3_wal_replication interface, notifying the pReplication implementation
+** of events such as beginning a write transaction, writing new frames to the
+** write-ahead log, undoing a write transaction and ending a write
+** transaction. The given pArg will be passed back when invoking the hooks
+** defined in the pReplication implementation.
+**
+** If the bEnabled flag is 1 and WAL replication is already enabled on this
+** pager (either leader or follower WAL replication), an error is returned.
+*/
+int sqlite3PagerWalReplicationSet(
+  Pager *pPager,
+  int bEnable,                           /* True to enable WAL replication */
+  sqlite3_wal_replication *pReplication, /* Leader WAL replication */
+  void *pArg                             /* Leader WAL replication argument */
+){
+  /* Valid input */
+  assert( pPager );
+  assert( bEnable==0 || bEnable==1 );
+  assert( bEnable==1 || pReplication==0 );
+  assert( pReplication!=0 || pArg==0 );
+
+  /* Current WAL replication mode must be either leader replication, follower
+  ** replication, or no replication at all.
+  */
+  assert( (pPager->pWalReplication!=0 && pPager->bWalReplicationFollower==0)
+       || (pPager->pWalReplication==0 && pPager->bWalReplicationFollower==1)
+       || (pPager->pWalReplication==0 && pPager->bWalReplicationFollower==0)
+  );
+
+  /* The WAL replication method argument can be set only if leader WAL
+  ** replication is enabled.
+  */
+  assert( pPager->pWalReplication!=0 || pPager->pWalReplicationArg==0 );
+
+  /* We require the database to be in WAL mode */
+  if( pPager->journalMode!=PAGER_JOURNALMODE_WAL ){
+    return SQLITE_ERROR;
+  }
+
+  if( bEnable ){
+    /* We require WAL replication to be currently disabled */
+    if( pPager->pWalReplication!=0 || pPager->bWalReplicationFollower==1 ){
+      return SQLITE_ERROR;
+    }
+    pPager->bWalReplicationFollower = pReplication == 0;
+    pPager->pWalReplication = pReplication;
+    pPager->pWalReplicationArg = pArg;
+  }
+
+  return SQLITE_OK;
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 #endif /* !SQLITE_OMIT_WAL */
 
