@@ -139,4 +139,46 @@ do_test 2.3 {
   sqlite3_wal_replication_enabled db main
 } {false}
 
+#-------------------------------------------------------------------------
+# The following block of tests - walreplication-3.* - focus on testing the
+# implementation of the sqlite3_wal_replication_leader() interface.
+
+# Test that an error is returned if the database is not in WAL mode.
+#
+do_test 3.1 {
+  reset_db
+  execsql { PRAGMA journal_mode = DELETE }
+  list [catch {sqlite3_wal_replication_leader db main} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that an error is returned if the given schema name is invalid.
+#
+do_test 3.2 {
+  list [catch {sqlite3_wal_replication_leader db garbage} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that an error is returned if the given WAL replication name is not
+# registered
+#
+do_test 3.3 {
+  reset_db
+  sqlite3_wal db
+  list [catch {sqlite3_wal_replication_leader db main garbage} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that leader WAL replication is enabled after a successful call.
+#
+do_test 3.4 {
+  sqlite3_wal_replication_register 1
+  sqlite3_wal_replication_leader db main
+  sqlite3_wal_replication_enabled db main
+} {true test}
+
+# Test that trying to enable leader replication twice for the same
+# database results in an error.
+#
+do_test 3.5 {
+  list [catch {sqlite3_wal_replication_leader db main} msg] $msg
+} {1 SQLITE_ERROR}
+
 finish_test
