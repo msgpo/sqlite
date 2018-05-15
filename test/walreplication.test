@@ -634,6 +634,63 @@ do_test 6.10.2 {
   }
 } {x}
 
+# Test that if the xFrames receives information about the most recently written
+# WAL frame associated with a dirty page.
+#
+do_test 6.11.1 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_leader db main
+
+  execsql { CREATE TABLE test (a TEXT) }
+
+  # Exactly two brand new frames were written, so trying to get info about a
+  # third frame fails.
+  list [catch {sqlite3_wal_replication_frame_info 2} msg] $msg
+} {1 {no such frame}}
+do_test 6.11.2 {
+  # Page 1 was written for the first time to the WAL, so the frame's iPrev is 0.
+  sqlite3_wal_replication_frame_info 1
+} {1024 1 0}
+do_test 6.11.3 {
+  # Page 2 was written for the first time to the WAL, so the frame's iPrev is 0.
+  sqlite3_wal_replication_frame_info 0
+} {1024 2 0}
+do_test 6.11.4 {
+  execsql { INSERT INTO test VALUES('x') }
+  # Page 2 has been modified, and it was already present in the WAL as frame 2.
+  sqlite3_wal_replication_frame_info 0
+} {1024 2 2}
+do_test 6.11.5 {
+  execsql { INSERT INTO test VALUES(randomblob(2000)) }
+  # Page 2 has been modified again, and it was already present in the WAL as
+  # frame 3.
+  sqlite3_wal_replication_frame_info 1
+} {1024 2 3}
+do_test 6.11.6 {
+  # Page 3 has been added anew, so it was not present in the WAL.
+  sqlite3_wal_replication_frame_info 0
+} {1024 3 0}
+do_test 6.11.7 {
+  # The WAL has now 6 frames.
+ set size [expr 32 + 6 * (24 + 1024) ]
+  expr {[file size test.db-wal] == $size }
+} {1}
+do_test 6.11.8 {
+  # All those 6 frames were handled by xFrames.
+  list [catch {sqlite3_wal_replication_frame_info 6} msg] $msg
+} {1 {no such frame}}
+do_test 6.11.9 {
+  # Perform a full checkpoint.
+  execsql { PRAGMA wal_checkpoint }
+} {0 6 6}
+do_test 6.11.10 {
+  execsql { DELETE FROM test WHERE a='x' }
+  # Page 2 was modified, but this time iPrev is 0 because the WAL contained no
+  # frame after the checkpoint.
+  sqlite3_wal_replication_frame_info 0
+} {1024 2 0}
+
 #-------------------------------------------------------------------------
 # The following block of tests - walreplication-7.* - focus on testing the
 # implementation of the sqlite3_wal_replication_checkpoint() interface.
@@ -655,4 +712,7 @@ do_test 7.1.2 {
   file size ./test.db-wal
 } {0}
 
+reset_db
+sqlite3_wal db
+sqlite3_wal_replication_leader db main
 finish_test
