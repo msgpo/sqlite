@@ -716,7 +716,12 @@ struct Pager {
 #ifndef SQLITE_OMIT_WAL
   Wal *pWal;                  /* Write-ahead log used by "journal_mode=wal" */
   char *zWal;                 /* File name for write-ahead log */
-#endif
+#if defined(SQLITE_ENABLE_WAL_REPLICATION)
+  sqlite3_wal_replication* pWalReplication; /* Set when notifying WAL events */
+  void *pWalReplicationArg;                 /* Argument for WAL notifications */
+  u8 bWalReplicationFollower;               /* True when receiving WAL events */
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
+#endif /* !SQLITE_OMIT_WAL */
 };
 
 /*
@@ -4158,8 +4163,13 @@ int sqlite3PagerClose(Pager *pPager, sqlite3 *db){
     }
     sqlite3WalClose(pPager->pWal, db, pPager->walSyncFlags, pPager->pageSize,a);
     pPager->pWal = 0;
+#if defined(SQLITE_ENABLE_WAL_REPLICATION)
+    pPager->pWalReplication = 0;
+    pPager->pWalReplicationArg = 0;
+    pPager->bWalReplicationFollower = 0;
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
   }
-#endif
+#endif /* !SQLITE_OMIT_WAL */
   pager_reset(pPager);
   if( MEMDB ){
     pager_unlock(pPager);
@@ -4841,7 +4851,12 @@ int sqlite3PagerOpen(
     memcpy(pPager->zWal, zPathname, nPathname);
     memcpy(&pPager->zWal[nPathname], "-wal\000", 4+1);
     sqlite3FileSuffix3(pPager->zFilename, pPager->zWal);
-#endif
+#ifdef SQLITE_ENABLE_WAL_REPLICAtION
+    pPager->pWalReplication = 0;
+    pPager->pWalReplicationArg = 0;
+    pPager->bWalReplicationFollower = 0;
+#endif /* SQLITE_ENABLE_WAL_REPLICAtION */
+#endif /* !SQLITE_OMIT_WAL */
     sqlite3DbFree(0, zPathname);
   }
   pPager->pVfs = pVfs;
