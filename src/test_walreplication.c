@@ -37,6 +37,22 @@ extern const char *sqlite3ErrName(int);
 /* These functions are implemented in test1.c. */
 extern int getDbPointer(Tcl_Interp *, const char *, sqlite3 **);
 
+/* Hold information about a single WAL frame that was passed to the
+** sqlite3_wal_replication.xFrames method implemented in this file.
+**
+** This is used for test assertions.
+*/
+typedef struct testWalReplicationFrameInfo testWalReplicationFrameInfo;
+struct testWalReplicationFrameInfo {
+  unsigned szPage;   /* Number of bytes in the frame's page */
+  unsigned pgno;     /* Page number */
+  unsigned iPrev;    /* Most recent frame also containing pgno, or 0 if new */
+
+  /* Linked list of frame info objects maintained by testWalReplicationFrames,
+  ** head is the newest and tail the oldest. */
+  testWalReplicationFrameInfo* pNext;
+};
+
 /*
 ** Global WAL replication context used by this stub implementation of
 ** sqlite3_wal_replication_wal. It holds a state variable that captures the current
@@ -51,6 +67,11 @@ struct testWalReplicationContextType {
   int iFailures;       /* Number of times the eFailing method will error */
   sqlite3 *db;         /* Follower connection */
   const char *zSchema; /* Follower schema name */
+
+  /* List of all frames that were passed to the xFrames hook since the last
+  ** context reset.
+  */
+  testWalReplicationFrameInfo *pFrameList;
 };
 static testWalReplicationContextType testWalReplicationContext;
 
@@ -65,6 +86,29 @@ static testWalReplicationContextType testWalReplicationContext;
 #define FAILING_FRAMES 2
 #define FAILING_UNDO   3
 #define FAILING_END    4
+
+/* Reset the state of the global WAL replication context */
+static void testWalReplicationContextReset() {
+  testWalReplicationFrameInfo *pFrame;
+  testWalReplicationFrameInfo *pFrameNext;
+
+  testWalReplicationContext.eState = STATE_IDLE;
+  testWalReplicationContext.eFailing = 0;
+  testWalReplicationContext.rc = 0;
+  testWalReplicationContext.iFailures = 8192; /* Effetively infinite */
+  testWalReplicationContext.db = 0;
+  testWalReplicationContext.zSchema = 0;
+
+  /* Free all memory allocated for frame info objects */
+  pFrame = testWalReplicationContext.pFrameList;
+  while( pFrame ){
+    pFrameNext = pFrame->pNext;
+    sqlite3_free(pFrame);
+    pFrame = pFrameNext;
+  }
+
+  testWalReplicationContext.pFrameList = 0;
+}
 
 /*
 ** A version of sqlite3_wal_replication.xBegin() that transitions the global
@@ -115,10 +159,31 @@ static int testWalReplicationFrames(
 ){
   int rc = SQLITE_OK;
   int isBegin = 1;
+  int i;
+  sqlite3_wal_replication_frame *pNext;
+  testWalReplicationFrameInfo *pFrame;
+
   assert( pArg==&testWalReplicationContext );
   assert( testWalReplicationContext.eState==STATE_PENDING
        || testWalReplicationContext.eState==STATE_WRITING
   );
+
+  /* Save information about these frames */
+  pNext = aFrame;
+  for (i=0; i<nFrame; i++) {
+    pFrame = (testWalReplicationFrameInfo*)(sqlite3_malloc(
+        sizeof(testWalReplicationFrameInfo)));
+    if( !pFrame ){
+	return SQLITE_NOMEM;
+    }
+    pFrame->szPage = szPage;
+    pFrame->pgno = pNext->pgno;
+    pFrame->iPrev = pNext->iPrev;
+    pFrame->pNext = testWalReplicationContext.pFrameList;
+    testWalReplicationContext.pFrameList = pFrame;
+    pNext += 1;
+  }
+
   if( testWalReplicationContext.eState==STATE_PENDING ){
     /* If the replication state is STATE_PENDING, it means that this is the
     ** first batch of frames of a new transaction. */
@@ -443,6 +508,55 @@ static int SQLITE_TCLAPI test_wal_replication_error(
 }
 
 /*
+** tclcmd: sqlite3_wal_replication_frame_info N
+**
+** Return information about the N'th oldest frame that was handled by
+** testWalReplicationFrames since the last global context reset.
+**
+** If N is 0, information about the most recent frame is returned.
+*/
+static int SQLITE_TCLAPI test_wal_replication_frame_info(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int i;
+  int n;
+  testWalReplicationFrameInfo *pFrame = testWalReplicationContext.pFrameList;
+  char zSzPage[32];
+  char zPgno[32];
+  char zPrev[32];
+
+  if( objc!=2 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "N");
+    return TCL_ERROR;
+  }
+
+  if( Tcl_GetIntFromObj(interp, objv[1], &n) ) return TCL_ERROR;
+
+  for(i=0; i<n; i++){
+    if( !pFrame ){
+      break;
+    }
+    pFrame = pFrame->pNext;
+  }
+
+  if( !pFrame ){
+    Tcl_AppendResult(interp, "no such frame", (char*)0);
+    return TCL_ERROR;
+  }
+
+  sqlite3_snprintf(sizeof(zSzPage), zSzPage, "%d ", pFrame->szPage);
+  sqlite3_snprintf(sizeof(zPgno), zPgno, "%d ", pFrame->pgno);
+  sqlite3_snprintf(sizeof(zPrev), zPrev, "%d", pFrame->iPrev);
+
+  Tcl_AppendResult(interp, zSzPage, zPgno, zPrev, (char*)0);
+
+  return TCL_OK;
+}
+
+/*
 ** tclcmd: sqlite3_wal_replication_enabled HANDLE SCHEMA
 **
 ** Return "true" if WAL replication is enabled on the given database, "false"
@@ -537,12 +651,7 @@ static int SQLITE_TCLAPI test_wal_replication_leader(
   }
 
   /* Reset any previous global context state */
-  testWalReplicationContext.eState = STATE_IDLE;
-  testWalReplicationContext.eFailing = 0;
-  testWalReplicationContext.rc = 0;
-  testWalReplicationContext.iFailures = 8192; /* Effetively infinite */
-  testWalReplicationContext.db = 0;
-  testWalReplicationContext.zSchema = 0;
+  testWalReplicationContextReset();
 
   rc = sqlite3_wal_replication_leader(db, zSchema, zReplication, pArg);
 
@@ -691,6 +800,8 @@ int Sqlitetestwalreplication_Init(Tcl_Interp *interp){
           test_wal_replication_unregister,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_error",
           test_wal_replication_error,0,0);
+  Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_frame_info",
+          test_wal_replication_frame_info,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_enabled",
           test_wal_replication_enabled,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_leader",
