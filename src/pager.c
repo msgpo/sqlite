@@ -3180,7 +3180,7 @@ static int pagerWalFrames(
   Pgno nTruncate,                 /* Database size after this commit */
   int isCommit                    /* True if this is a commit */
 ){
-  int rc;                         /* Return code */
+  int rc = SQLITE_OK;             /* Return code */
   int nList;                      /* Number of pages in pList */
   PgHdr *p;                       /* For looping over pages */
 
@@ -3214,9 +3214,45 @@ static int pagerWalFrames(
   pPager->aStat[PAGER_STAT_WRITE] += nList;
 
   if( pList->pgno==1 ) pager_write_changecounter(pList);
-  rc = sqlite3WalFrames(pPager->pWal, 
-      pPager->pageSize, pList, nTruncate, isCommit, pPager->walSyncFlags
-  );
+#if defined(SQLITE_ENABLE_WAL_REPLICATION) && !defined(SQLITE_OMIT_WAL)
+  /* When in leader WAL replication mode fire the xFrames method of the
+  ** configured replication implementation. The method implementation is
+  ** typically in charge of broadcasting the frames to other nodes, and ensure
+  ** that a quorum of them have received the message. */
+  if( pPager->pWalReplication ){
+    assert( pPager->pWalReplication->xFrames );
+
+    /* Allocate a new buffer of replication pages to pass to xFrames. */
+    sqlite3_wal_replication_frame *aFrame;
+    aFrame = (sqlite3_wal_replication_frame*)sqlite3_malloc(
+        sizeof(sqlite3_wal_replication_frame) * (nList));
+    if( aFrame==0 ){
+      rc = SQLITE_NOMEM_BKPT;
+    }else{
+      /* Copy into the replication pages list all data about dirty pages that
+      ** should be written to the write-ahead log. */
+      for(p=pList; p; p=p->pDirty){
+        aFrame->pBuf = p->pData;
+        aFrame->pgno = p->pgno;
+        aFrame += 1;
+      }
+      aFrame -= nList;
+      rc = pPager->pWalReplication->xFrames(
+          pPager->pWalReplication, pPager->pWalReplicationArg,
+          pPager->pageSize, nList, aFrame, nTruncate, isCommit
+      );
+      /* Release the replication pages buffer. */
+      sqlite3_free(aFrame);
+    }
+  }
+  if( rc==SQLITE_OK ){
+#else
+  {
+#endif /* SQLITE_ENABLE_WAL_REPLICATION && !SQLITE_OMIT_WAL */
+    rc = sqlite3WalFrames(pPager->pWal,
+        pPager->pageSize, pList, nTruncate, isCommit, pPager->walSyncFlags
+    );
+  }
   if( rc==SQLITE_OK && pPager->pBackup ){
     for(p=pList; p; p=p->pDirty){
       sqlite3BackupUpdate(pPager->pBackup, p->pgno, (u8 *)p->pData);
@@ -7809,6 +7845,91 @@ int sqlite3PagerWalReplicationSet(
   }
 
   return SQLITE_OK;
+}
+
+/*
+** Write new frames into the WAL in the context of a replicated transaction.
+**
+** If the isBegin flag is true, also start a new WAL write transaction. If the
+** commit flag true, also commit the transaction.
+**
+** This interface must be called only on connections in follower WAL replication
+** mode (i.e. pPager->bWalReplicationFollower is set to 1).
+*/
+int sqlite3PagerWalReplicationFrames(
+  Pager *pPager,
+  int isBegin,
+  int szPage,
+  int nFrame,
+  unsigned *aPgno,
+  void *aPage,
+  unsigned nTruncate,
+  int isCommit
+){
+  int rc;
+  int changed;
+  int i;
+  unsigned *pNextPgno;
+  void *pNextPage;
+  PgHdr* pPgHdr;
+
+  /* Make sure we are in follower WAL replication mode */
+  if( pPager->bWalReplicationFollower!=1 ){
+    return SQLITE_ERROR;
+  }
+
+  /* Make sure the page size matches the one set for this pager */
+  if( szPage!=pPager->pageSize ){
+    return SQLITE_ERROR;
+  }
+
+  /* If the isBegin flag is on, start a new WAL write transaction */
+  if( isBegin ){
+    rc = sqlite3WalBeginReadTransaction(pPager->pWal, &changed);
+    if( rc==SQLITE_OK ){
+      rc = sqlite3WalBeginWriteTransaction(pPager->pWal);
+    }
+    if( rc!=SQLITE_OK ){
+      return rc;
+    }
+  }
+
+  /* Create a buffer of nList page headers and link them together
+  ** using the PgHdr->pDirty pointer. */
+  pNextPgno = aPgno;
+  pNextPage = aPage;
+  pPgHdr = (PgHdr*)sqlite3_malloc(sizeof(PgHdr) * (nFrame));
+  if( pPgHdr==0 ){
+    return SQLITE_NOMEM_BKPT;
+  }
+  for (i=0; i<nFrame; i++) {
+    /* Initialize only the PgHdr fields that matter for sqlite3WalFrames, namely
+    ** pData, pDirty, pgno and flags. */
+    pPgHdr->pData = pNextPage;
+    pPgHdr->pDirty = i==nFrame-1 ? 0 : pPgHdr + 1;
+    pPgHdr->pgno = *pNextPgno;
+    pPgHdr->flags = 0;
+
+    pNextPgno += 1;
+    pNextPage += 1;
+    pPgHdr += 1;
+  }
+  pPgHdr -= nFrame;
+
+  /* Write the frames */
+  rc = sqlite3WalFrames(pPager->pWal,
+      pPager->pageSize, pPgHdr, nTruncate, isCommit, pPager->walSyncFlags);
+
+  /* Free the page headers buffer */
+  sqlite3_free(pPgHdr);
+
+  /* If the commit flag is on, also finalize the transaction */
+  if( rc==SQLITE_OK && isCommit ){
+    rc = sqlite3WalEndWriteTransaction(pPager->pWal);
+    sqlite3WalEndReadTransaction(pPager->pWal);
+  }
+
+  return rc;
 }
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 #endif /* !SQLITE_OMIT_WAL */
