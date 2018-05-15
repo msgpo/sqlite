@@ -9496,6 +9496,51 @@ SQLITE_EXPERIMENTAL int sqlite3_wal_replication_none(
 );
 
 /*
+** CAPI3REF: Write WAL frames in the context of a replicated transaction.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_frames(D,S,B,P,N,L,D,T,C)] interface writes new
+** frames into the write-ahead log for schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_frames()] interface returns SQLITE_OK on success
+** or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_frames()] requires
+** that schema S of [database connection] D has been set to follower WAL
+** replication mode using [sqlite3_wal_replication_follower()].
+**
+** The B, P, N, L, D, T, and C parameters contain information about the new
+** frames to append to the write-ahead log. If B is non-zero, then this is the
+** first batch of frames of a new WAL write transaction, and a new transaction
+** will be started. If C is non-zero, then this is the final batch of frames of
+** a WAL write transaction, and a commit will be performed. The P parameter
+** contains the size of each page in bytes, the N parameter contains the number
+** of frames to write, the L parameter is an ordered array of N page numbers
+** (one for each frame to write), and the D parameter is an ordered array of
+** N page data blocks of size P (one for each page number in L).
+**
+** The sqlite3_wal_replication_frames() interface is designed to match the
+** typical use case of a follower SQLite node obtaining the various parameters
+** by sequentially reading a byte stream from a network socket and passing
+** the data to this routine directly without any copy or futher allocation,
+** possibly except for integer encoding/decoding.
+**
+** The [sqlite3_wal_replication_frames()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_frames(
+  sqlite3 *db,         /* Database handle */
+  const char *zSchema, /* Name of attached database (or NULL) */
+  int isBegin,         /* Begin flag (for new transactions) */
+  int szPage,          /* Database page-size in bytes */
+  int nFrame,          /* Number of frames to write */
+  unsigned *aPgno,     /* Array of nList page numbers */
+  void *aPage,         /* Array of nList pages, each of szPage bytes */
+  unsigned nTruncate,  /* Truncate flag, used by the WAL */
+  int isCommit         /* Commit flag, used for committing */
+);
+
+/*
 ** Undo the hack that converts floating point types to integer for
 ** builds on processors without floating point support.
 */

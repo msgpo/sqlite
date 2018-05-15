@@ -2605,6 +2605,52 @@ int sqlite3_wal_replication_none(sqlite3 *db, const char *zSchema){
   return SQLITE_ERROR;
 #endif /* !SQLITE_OMIT_WAL */
 }
+
+/*
+** Write new WAL frames in the context of a replicated transaction.
+**
+** If the isBegin flag is true, also start a new WAL write transaction. If the
+** commit flag true, also commit the transaction.
+**
+** This interface must be called only on connections that have been switched
+** to follower WAL replication mode using sqlite3_wal_replication_follower().
+*/
+int sqlite3_wal_replication_frames(
+  sqlite3 *db,
+  const char *zSchema,
+  int isBegin,
+  int szPage,
+  int nFrame,
+  unsigned *aPgno,
+  void *aPage,
+  unsigned nTruncate,
+  int isCommit
+){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+    sqlite3BtreeEnter(pBt);
+    Pager *pPager = sqlite3BtreePager(pBt);
+    rc = sqlite3PagerWalReplicationFrames(pPager,
+        isBegin, szPage, nFrame, aPgno, aPage, nTruncate, isCommit);
+    sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 
 /*
