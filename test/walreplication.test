@@ -17,6 +17,11 @@ source $testdir/tester.tcl
 ifcapable !wal_replication {finish_test; return}
 set testprefix walreplication
 
+proc sqlite3_wal {args} {
+  [lindex $args 0] eval { PRAGMA page_size = 1024 }
+  [lindex $args 0] eval { PRAGMA journal_mode = wal }
+}
+
 #----------------------------------------------------------------------------
 # The following block of tests - walreplication-1.* - focus on testing the
 # implementation of the sqlite3_wal_replication_find(),
@@ -108,5 +113,30 @@ do_test 1.8.1 {
 do_test 1.8.2 {
   sqlite3_wal_replication_find
 } {}
+
+#-------------------------------------------------------------------------
+# The following block of tests - walreplication-2.* - focus on testing the
+# implementation of the sqlite3_wal_replication_enabled() interface.
+
+# Test that an error is returned if the database is not in WAL mode.
+#
+do_test 2.1 {
+  execsql { PRAGMA journal_mode = DELETE }
+  list [catch {sqlite3_wal_replication_enabled db main} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that an error is returned if the given schema name does not exist.
+#
+do_test 2.2 {
+  list [catch {sqlite3_wal_replication_enabled db garbage} msg] $msg
+} {1 SQLITE_ERROR}
+
+# Test that by default no WAL synchronous replication is enabled.
+#
+do_test 2.3 {
+  reset_db
+  sqlite3_wal db
+  sqlite3_wal_replication_enabled db main
+} {false}
 
 finish_test
