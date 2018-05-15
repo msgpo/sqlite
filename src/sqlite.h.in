@@ -9472,6 +9472,41 @@ SQLITE_EXPERIMENTAL int sqlite3_wal_replication_unregister(
   sqlite3_wal_replication *pReplication);
 
 /*
+** CAPI3REF: Check if WAL replication is enabled on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_enabled(D,S,E,R)] interface checks if WAL
+** replication is enabled for schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_enabled()] interface returns SQLITE_OK on
+** success or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to sqlite3_wal_replication_enabled(D,S,E,R)
+** requires that the database connection D is in [WAL mode].
+**
+** On success, the [sqlite3_wal_replication_enabled()] interface sets *E to 1 if
+** WAL replication is enabled for schema S of database D, or to 0 otherwise.
+**
+** If replication is enabled, and schema S of database D is currently performing
+** leader replication (i.e. sqlite3_wal_replication_leader() was called against
+** it), the *R pointer will be set to the sqlite3_wal_replication object
+** currently being used for replicating WAL events.
+**
+** If replication is enabled, and schema S of database D is currently performing
+** follower replication (i.e. sqlite3_wal_replication_follower() was called
+** against it), the *R pointer will be set to NULL.
+**
+** The [sqlite3_wal_replication_enabled()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+**/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_enabled(
+  sqlite3 *db,                            /* Database handle */
+  const char *zSchema,                    /* Name of attached database (or NULL) */
+  int *pbEnabled,                         /* OUT: True if WAL replication is enabled */
+  sqlite3_wal_replication **ppReplication /* OUT: If leader replication is on */
+);
+
+/*
 ** Undo the hack that converts floating point types to integer for
 ** builds on processors without floating point support.
 */

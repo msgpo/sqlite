@@ -7729,6 +7729,56 @@ void sqlite3PagerSnapshotUnlock(Pager *pPager){
 }
 
 #endif /* SQLITE_ENABLE_SNAPSHOT */
+
+#ifdef SQLITE_ENABLE_WAL_REPLICATION
+/*
+** Get the current WAL replication mode enabled on this pager.
+**
+** If the pager is not in WAL mode, an error is returned.
+**
+** If no WAL replication is enabled, *bpEnabled will be set to 0.
+**
+** If leader WAL replication is enabled, *bpEnabled will be set to 1 and
+** *ppReplication will point the the WAL replication implementation currently in
+** use.
+**
+** If follower WAL replication is enabled, *bpEnabled will be set to 1 and
+** *ppReplication to NULL.
+*/
+int sqlite3PagerWalReplicationGet(
+  Pager *pPager,
+  int *pbEnabled,                         /* OUT: True if replication is on */
+  sqlite3_wal_replication **ppReplication /* OUT: Set for leader replication */
+) {
+  /* Valid input */
+  assert( pPager );
+  assert( pbEnabled );
+  assert( ppReplication );
+
+  /* Current WAL replication mode must be either leader replication, follower
+  ** replication, or no replication at all.
+  */
+  assert( (pPager->pWalReplication!=0 && pPager->bWalReplicationFollower==0)
+       || (pPager->pWalReplication==0 && pPager->bWalReplicationFollower==1)
+       || (pPager->pWalReplication==0 && pPager->bWalReplicationFollower==0)
+  );
+
+  /* The WAL hook replication argument can be set only if leader WAL replication
+  ** is enabled.
+  */
+  assert( pPager->pWalReplication!=0 || pPager->pWalReplicationArg==0 );
+
+  /* We require the database to be in WAL mode */
+  if( pPager->journalMode!=PAGER_JOURNALMODE_WAL ){
+    return SQLITE_ERROR;
+  }
+
+  *pbEnabled = pPager->pWalReplication!=0 || pPager->bWalReplicationFollower==1;
+  *ppReplication = pPager->pWalReplication;
+
+  return SQLITE_OK;
+}
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
 #endif /* !SQLITE_OMIT_WAL */
 
 #ifdef SQLITE_ENABLE_ZIPVFS
