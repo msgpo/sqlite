@@ -2364,6 +2364,44 @@ int sqlite3_wal_replication_unregister(sqlite3_wal_replication *pReplication){
   sqlite3_mutex_leave(mutex);
   return SQLITE_OK;
 }
+
+/*
+** Check if WAL synchronous replication is enabled on the given schema of the
+** given database connection.
+*/
+int sqlite3_wal_replication_enabled(
+  sqlite3 *db,
+  const char *zSchema,
+  int *pbEnabled,
+  sqlite3_wal_replication **ppReplication
+){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+    sqlite3BtreeEnter(pBt);
+    Pager *pPager = sqlite3BtreePager(pBt);
+    assert( pPager );
+    if( sqlite3PagerGetJournalMode(pPager)==PAGER_JOURNALMODE_WAL ){
+      rc = sqlite3PagerWalReplicationGet(pPager, pbEnabled, ppReplication);
+    }
+    sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* !SQLITE_OMIT_WAL */
+}
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
 
 /*

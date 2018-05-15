@@ -187,6 +187,9 @@ int sqlite3PagerSharedLock(Pager *pPager);
   int sqlite3PagerSnapshotOpen(Pager *pPager, sqlite3_snapshot *pSnapshot);
   int sqlite3PagerSnapshotRecover(Pager *pPager);
 # endif
+#ifdef SQLITE_ENABLE_WAL_REPLICATION
+  int sqlite3PagerWalReplicationGet(Pager*, int*, sqlite3_wal_replication**);
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
 #else
 # define sqlite3PagerUseWal(x,y) 0
 #endif
