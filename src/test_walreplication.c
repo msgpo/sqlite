@@ -32,6 +32,11 @@
 #include "sqlite3.h"
 #include <assert.h>
 
+extern const char *sqlite3ErrName(int);
+
+/* These functions are implemented in test1.c. */
+extern int getDbPointer(Tcl_Interp *, const char *, sqlite3 **);
+
 /*
 ** A no-op version of sqlite3_wal_replication.xBegin().
 */
@@ -234,6 +239,67 @@ static int SQLITE_TCLAPI test_wal_replication_unregister(
 }
 
 /*
+** tclcmd: sqlite3_wal_replication_enabled HANDLE SCHEMA
+**
+** Return "true" if WAL replication is enabled on the given database, "false"
+** otherwise.
+**
+** If leader replication is enabled, the name of the implementation used is also
+** returned.
+*/
+static int SQLITE_TCLAPI test_wal_replication_enabled(
+  void * clientData,
+  Tcl_Interp *interp,
+  int objc,
+  Tcl_Obj *CONST objv[]
+){
+  int rc;
+  sqlite3 *db;
+  const char *zSchema;
+  int bEnabled;
+  sqlite3_wal_replication *pReplication;
+  char *zEnabled;
+  const char *zReplication = 0;
+  char zBuf[32];
+
+  if( objc!=3 ){
+    Tcl_WrongNumArgs(interp, 1, objv, "HANDLE SCHEMA");
+    return TCL_ERROR;
+  }
+
+  if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ){
+    return TCL_ERROR;
+  }
+  zSchema = Tcl_GetString(objv[2]);
+
+  rc = sqlite3_wal_replication_enabled(db, zSchema, &bEnabled, &pReplication);
+
+  if( rc!=SQLITE_OK ){
+    Tcl_AppendResult(interp, sqlite3ErrName(rc), (char*)0);
+    return TCL_ERROR;
+  }
+
+  if( bEnabled ){
+    zEnabled = "true";
+    if( pReplication ){
+      zReplication = pReplication->zName;
+    }
+  }else{
+    zEnabled = "false";
+  }
+
+  if( zReplication ){
+    sqlite3_snprintf(sizeof(zBuf), zBuf, " %s", zReplication);
+  }else{
+    zBuf[0] = 0;
+  }
+
+  Tcl_AppendResult(interp, zEnabled, zBuf, (char*)0);
+
+  return TCL_OK;
+}
+
+/*
 ** This routine registers the custom TCL commands defined in this
 ** module.  This should be the only procedure visible from outside
 ** of this module.
@@ -245,6 +311,8 @@ int Sqlitetestwalreplication_Init(Tcl_Interp *interp){
           test_wal_replication_register,0,0);
   Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_unregister",
           test_wal_replication_unregister,0,0);
+  Tcl_CreateObjCommand(interp, "sqlite3_wal_replication_enabled",
+          test_wal_replication_enabled,0,0);
   return TCL_OK;
 }
 #endif /* SQLITE_ENABLE_WAL_REPLICATION */
