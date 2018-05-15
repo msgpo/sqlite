@@ -3274,6 +3274,13 @@ static int pagerWalFrames(
       for(p=pList; p; p=p->pDirty){
         aFrame->pBuf = p->pData;
         aFrame->pgno = p->pgno;
+        /* Check if this page already in the WAL. It will serve as a hint to
+        ** implementations of sqlite3_wal_replication.xFrames that optimize
+        ** replication by only sending binary diffs of WAL pages over the
+        ** network, as they can make assumptions about the frames contained
+        ** in the replicated WALs.
+        */
+        sqlite3WalFindFrame(pPager->pWal, p->pgno, &aFrame->iPrev);
         aFrame++;
       }
       aFrame -= nList;
