@@ -2350,6 +2350,410 @@ int sqlite3Checkpoint(sqlite3 *db, int iDb, int eMode, int *pnLog, int *pnCkpt){
 }
 #endif /* SQLITE_OMIT_WAL */
 
+#ifdef SQLITE_ENABLE_WAL_REPLICATION
+/*
+** The list of all registered WAL replication implementations.
+**
+** Access to this variable is protected by SQLITE_MUTEX_STATIC_MASTER.
+*/
+static sqlite3_wal_replication *walReplicationList = 0;
+
+/*
+** Locate a WAL replication implementation by name. If no name is given, simply
+** return the first registered implementation, or NULL if no WAL replication
+** implementation is registered.
+*/
+sqlite3_wal_replication *sqlite3_wal_replication_find(const char *zReplication){
+  sqlite3_wal_replication *p = 0;
+#if SQLITE_THREADSAFE
+  sqlite3_mutex *mutex;
+#endif
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return 0;
+#endif
+#if SQLITE_THREADSAFE
+  mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+#endif
+  sqlite3_mutex_enter(mutex);
+
+  for(p=walReplicationList; p; p=p->pNext){
+    if( zReplication==0 ) break;
+    if( strcmp(zReplication, p->zName)==0 ) break;
+  }
+
+  sqlite3_mutex_leave(mutex);
+
+  return p;
+}
+
+/*
+** Unlink a WAL synchronous replication implementation from the linked list.
+*/
+static void walReplicationUnlink(sqlite3_wal_replication *pReplication){
+  assert( sqlite3_mutex_held(sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER)) );
+  if( pReplication==0 ){
+    /* No-op */
+  }else if( walReplicationList==pReplication ){
+    walReplicationList = pReplication->pNext;
+  }else if( walReplicationList ){
+    sqlite3_wal_replication *p = walReplicationList;
+    while( p->pNext && p->pNext!=pReplication ){
+      p = p->pNext;
+    }
+    if( p->pNext==pReplication ){
+      p->pNext = pReplication->pNext;
+    }
+  }
+}
+
+/*
+** Register a WAL replication implementation. It is harmless to register the
+** same implementation multiple times. The new implementation becomes the
+** default if makeDflt is true.
+*/
+int sqlite3_wal_replication_register(
+  sqlite3_wal_replication *pReplication, int makeDflt){
+#ifndef SQLITE_OMIT_WAL
+  MUTEX_LOGIC( sqlite3_mutex *mutex; )
+#ifndef SQLITE_OMIT_AUTOINIT
+  int rc = sqlite3_initialize();
+  if( rc ) return rc;
+#endif
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( pReplication==0 ) return SQLITE_MISUSE_BKPT;
+#endif
+
+  MUTEX_LOGIC( mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER); )
+  sqlite3_mutex_enter(mutex);
+
+  walReplicationUnlink(pReplication);
+  if( makeDflt || walReplicationList==0 ){
+    pReplication->pNext = walReplicationList;
+    walReplicationList = pReplication;
+  }else{
+    pReplication->pNext = walReplicationList->pNext;
+    walReplicationList->pNext = pReplication;
+  }
+  assert(walReplicationList);
+
+  sqlite3_mutex_leave(mutex);
+
+  return SQLITE_OK;
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
+
+/*
+** Unregister a WAL replication implementation so that it is no longer
+** accessible.
+*/
+int sqlite3_wal_replication_unregister(sqlite3_wal_replication *pReplication){
+#if SQLITE_THREADSAFE
+  sqlite3_mutex *mutex = sqlite3MutexAlloc(SQLITE_MUTEX_STATIC_MASTER);
+#endif
+  sqlite3_mutex_enter(mutex);
+  walReplicationUnlink(pReplication);
+  sqlite3_mutex_leave(mutex);
+  return SQLITE_OK;
+}
+
+/*
+** Check if WAL synchronous replication is enabled on the given schema of the
+** given database connection.
+*/
+int sqlite3_wal_replication_enabled(
+  sqlite3 *db,
+  const char *zSchema,
+  int *pbEnabled,
+  sqlite3_wal_replication **ppReplication
+){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+    sqlite3BtreeEnter(pBt);
+    Pager *pPager = sqlite3BtreePager(pBt);
+    assert( pPager );
+    if( sqlite3PagerGetJournalMode(pPager)==PAGER_JOURNALMODE_WAL ){
+      rc = sqlite3PagerWalReplicationGet(pPager, pbEnabled, ppReplication);
+    }
+    sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* !SQLITE_OMIT_WAL */
+}
+
+/*
+** Enable leader WAL replication on the given connection.
+**
+** The zReplication parameter must be the name of a WAL replication
+** implementation previously registered with
+** sqlite3_wal_replication_register. The replication implementation will be
+** notified of WAL lifecycle events, such as begin a write transaction, write
+** new frames to the log, undo a write transaction and end a write transaction.
+**
+** When invoking the hooks defined in the given sqlite3_wal_replication
+** implementation, SQLite will pass them the given custom argument back.
+*/
+int sqlite3_wal_replication_leader(
+  sqlite3 *db, const char *zSchema, const char *zReplication, void *pArg
+){
+#ifndef SQLITE_OMIT_WAL
+  sqlite3_wal_replication *pReplication;
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  pReplication = sqlite3_wal_replication_find(zReplication);
+
+  if( !pReplication ){
+    /* No WAL replication implementation is registered under the given name */
+    return SQLITE_ERROR;
+  }
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+      sqlite3BtreeEnter(pBt);
+      Pager *pPager = sqlite3BtreePager(pBt);
+      assert( pPager );
+      rc = sqlite3PagerWalReplicationSet(pPager, db, 1, pReplication, pArg);
+      if( rc==SQLITE_OK ) {
+        /* Disable checkpointing the WAL on close, since the replication
+        ** implementation should take care of checkpointing explicitly.
+        */
+        int ckpt;
+        rc = sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, &ckpt);
+      }
+      sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* !SQLITE_OMIT_WAL */
+}
+
+/*
+** Enable follower WAL replication on the given schema on the given connection.
+*/
+int sqlite3_wal_replication_follower(sqlite3 *db, const char *zSchema){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+      sqlite3BtreeEnter(pBt);
+      Pager *pPager = sqlite3BtreePager(pBt);
+      assert( pPager );
+      rc = sqlite3PagerWalReplicationSet(pPager, db, 1, 0, 0);
+      if( rc==SQLITE_OK ){
+	/* Disable checkpointing the WAL on close, since the replication
+	** implementation should take care of checkpointing explicitly. */
+	int ckpt;
+	rc = sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, &ckpt);
+
+        /* Invalidate all current cursors. Trying to create a new cursor will
+        ** also fail when in follower WAL replication mode.
+        */
+	if( rc==SQLITE_OK ){
+	  rc = sqlite3BtreeTripAllCursors(pBt, SQLITE_MISUSE, 0);
+	}
+      }
+      sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* !SQLITE_OMIT_WAL */
+}
+
+/*
+** Disable leader or follower WAL replication on the given schema of the given
+** connection.
+*/
+int sqlite3_wal_replication_none(sqlite3 *db, const char *zSchema){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+      sqlite3BtreeEnter(pBt);
+      Pager *pPager = sqlite3BtreePager(pBt);
+      assert( pPager );
+      rc = sqlite3PagerWalReplicationSet(pPager, db, 0, 0, 0);
+      sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* !SQLITE_OMIT_WAL */
+}
+
+/*
+** Write new WAL frames in the context of a replicated transaction.
+**
+** If the isBegin flag is true, also start a new WAL write transaction. If the
+** commit flag true, also commit the transaction.
+**
+** This interface must be called only on connections that have been switched
+** to follower WAL replication mode using sqlite3_wal_replication_follower().
+*/
+int sqlite3_wal_replication_frames(
+  sqlite3 *db,
+  const char *zSchema,
+  int isBegin,
+  int szPage,
+  int nFrame,
+  unsigned *aPgno,
+  void *aPage,
+  unsigned nTruncate,
+  int isCommit
+){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+    sqlite3BtreeEnter(pBt);
+    Pager *pPager = sqlite3BtreePager(pBt);
+    rc = sqlite3PagerWalReplicationFrames(pPager,
+        isBegin, szPage, nFrame, aPgno, aPage, nTruncate, isCommit);
+    sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
+
+/*
+** Undo WAL changes in the context of a replicated transaction that is
+** being rolled back.
+**
+** This interface must be called only on connections that have been switched to
+** follower WAL replication mode using sqlite3_wal_replication_follower().
+*/
+int sqlite3_wal_replication_undo(sqlite3 *db, const char *zSchema){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE;
+  }
+#endif
+
+  sqlite3_mutex_enter(db->mutex);
+  Btree *pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+    sqlite3BtreeEnter(pBt);
+    Pager *pPager = sqlite3BtreePager(pBt);
+    assert( pPager );
+    rc = sqlite3PagerWalReplicationUndo(pPager);
+    sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+
+  return rc;
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
+
+/*
+** Checkpoint a database in follower WAL replication mode.
+**
+** This interface must be called only on connections that have been switched
+** to follower replication mode using sqlite3_wal_replication_follower().
+*/
+int sqlite3_wal_replication_checkpoint(
+  sqlite3 *db,
+  const char *zSchema,
+  int eMode,
+  int *pnLog,
+  int *pnCkpt
+){
+#ifndef SQLITE_OMIT_WAL
+  int rc = SQLITE_ERROR;
+  Btree *pBt;
+  Pager *pPager;
+
+#ifdef SQLITE_ENABLE_API_ARMOR
+  if( !sqlite3SafetyCheckOk(db) ){
+    return SQLITE_MISUSE_BKPT;
+  }
+#endif
+
+  /* Initialize the output variables to -1 in case an error occurs. */
+  if( pnLog ) *pnLog = -1;
+  if( pnCkpt ) *pnCkpt = -1;
+
+  sqlite3_mutex_enter(db->mutex);
+  pBt = sqlite3DbNameToBtree(db, zSchema);
+  if( pBt ){
+      sqlite3BtreeEnter(pBt);
+      pPager = sqlite3BtreePager(pBt);
+      assert( pPager );
+      rc = sqlite3PagerWalReplicationCheckpoint(
+          pPager, db, eMode, pnLog, pnCkpt);
+      sqlite3BtreeLeave(pBt);
+  }
+  sqlite3_mutex_leave(db->mutex);
+  return rc;
+
+#else
+  return SQLITE_ERROR;
+#endif /* SQLITE_OMIT_WAL */
+}
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
+
 /*
 ** This function returns true if main-memory should be used instead of
 ** a temporary file for transient pager files and statement journals.

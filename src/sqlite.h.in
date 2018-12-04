@@ -504,6 +504,8 @@ int sqlite3_exec(
 #define SQLITE_IOERR_BEGIN_ATOMIC      (SQLITE_IOERR | (29<<8))
 #define SQLITE_IOERR_COMMIT_ATOMIC     (SQLITE_IOERR | (30<<8))
 #define SQLITE_IOERR_ROLLBACK_ATOMIC   (SQLITE_IOERR | (31<<8))
+#define SQLITE_IOERR_NOT_LEADER        (SQLITE_IOERR | (32<<8))
+#define SQLITE_IOERR_LEADERSHIP_LOST   (SQLITE_IOERR | (33<<8))
 #define SQLITE_LOCKED_SHAREDCACHE      (SQLITE_LOCKED |  (1<<8))
 #define SQLITE_LOCKED_VTAB             (SQLITE_LOCKED |  (2<<8))
 #define SQLITE_BUSY_RECOVERY           (SQLITE_BUSY   |  (1<<8))
@@ -9313,6 +9315,341 @@ int sqlite3_deserialize(
 #define SQLITE_DESERIALIZE_FREEONCLOSE 1 /* Call sqlite3_free() on close */
 #define SQLITE_DESERIALIZE_RESIZEABLE  2 /* Resize using sqlite3_realloc64() */
 #define SQLITE_DESERIALIZE_READONLY    4 /* Database is read-only */
+
+/*
+** CAPI3REF: Write-Ahead Log Replication Frame Object
+** EXPERIMENTAL
+**
+** The sqlite3_wal_replication_frame object represents a new frame about to be
+** appended to the write-ahead log of a [WAL mode] database.
+**
+** When an implementation for the WAL replication interface is provided (using
+** [sqlite3_wal_replication_register]) and [sqlite3_wal_replication_leader]
+** was called on a connection, passing a zReplication parameter matching the
+** registration name of that implementation, this object is used to inform the
+** replication implementation about the content of the new [write-ahead log]
+** frame.
+**
+** See [sqlite3_wal_replication] for additional information.
+*/
+typedef struct sqlite3_wal_replication_frame {
+  void *pBuf;        /* Page content of the WAL frame to be written */
+  unsigned pgno;     /* Page number */
+  unsigned iPrev;    /* Most recent frame also containing pgno, or 0 if new */
+} sqlite3_wal_replication_frame;
+
+/*
+** CAPI3REF: Write-Ahead Log Replication Object
+** EXPERIMENTAL
+**
+** An instance of this structure defines a set of write-ahead log lifecycle
+** hooks that can be used by third party libraries to replicate the
+** [write-ahead log] of a database across all SQLite instances that are part
+** of a cluster.
+**
+** A replication library should set a connection to leader replication mode
+** using [sqlite3_replication_leader]. At that point SQLite will invoke the
+** replication hooks whenever queries in that connection trigger WAL
+** changes. The replication library is then in charge of broadcasting the events
+** to other nodes and wait for a quorum.
+**
+** In case the node running the hook is not the current leader, then
+** [SQLITE_IOERR_NOT_LEADER] should be returned. This means that no broadcast
+** attempt was made at all.
+**
+** In case the node running the hook was the leader when the hook fired but was
+** the deposed half way while broadcasting, then [SQLITE_IOERR_LEADERSHIP_LOST]
+** should be returned. No assumption can be made whether the broadcast was
+** successful or not, and the replication library should take appropriate
+** recovery measures when a new leader gets elected.
+*/
+typedef struct sqlite3_wal_replication sqlite3_wal_replication;
+typedef struct sqlite3_wal_replication {
+  int iVersion;                   /* Structure version number (currently 1) */
+  sqlite3_wal_replication *pNext; /* Next registered WAL sync implementation */
+  const char *zName;              /* Name of this replication implementation */
+  void *pAppData;                 /* Pointer to application-specific data */
+  int (*xBegin)(sqlite3_wal_replication*, void *pArg);
+  int (*xAbort)(sqlite3_wal_replication*, void *pArg);
+  int (*xFrames)(sqlite3_wal_replication*, void *pArg, int szPage, int nFrame,
+      sqlite3_wal_replication_frame *aFrame, unsigned nTruncate, int isCommit);
+  int (*xUndo)(sqlite3_wal_replication*, void *pArg);
+  int (*xEnd)(sqlite3_wal_replication*, void *pArg);
+} sqlite3_wal_replication;
+
+/*
+** CAPI3REF: Write-Ahead Log Replication Objects
+** EXPERIMENTAL
+**
+** A WAL replication is an [sqlite3_wal_replication] object that third-party
+** libraries can use to synchronously replicate the [write-ahed log] of a
+** database across a cluster of SQLite nodes.
+**
+** The sqlite3_wal_replication_find() interface returns a pointer to a WAL
+** replication implementation given its name (names are case sensitive
+** zero-terminated UTF-8 strings).
+**
+** If there is no match, a NULL pointer is returned.
+**
+** If zReplication is NULL then the default WAL replication implementation is
+** returned, or NULL if none is registered.
+**
+** New WAL replication implementations are registered with
+** sqlite3_wal_replication_register(). Each new WAL replication implementation
+** becomes the default one if the makeDflt flag is set.
+**
+** The same WAL replication implementation can be registered multiple times
+** without injury.
+**
+** To make an existing WAL replication implementation into the default one,
+** register it again with the makeDflt flag set. If two different WAL
+** replication implementations with the same name are registered, the behavior
+** is undefined.  If a WAL replication implementation is registered with a name
+** that is NULL or an empty string, then the behavior is undefined.
+**
+** Unregister a WAL replication implementation with the
+** sqlite3_wal_replication_unregister() interface (if the default WAL
+** replication implementation is unregistered, another one is arbitrarily chosen
+** as the new default).
+**
+** The sqlite3_wal_replication_find(), sqlite3_wal_replication_register() and
+** sqlite3_wal_replication_unregister() interfaces is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL sqlite3_wal_replication *sqlite3_wal_replication_find(
+  const char *zReplication);
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_register(
+  sqlite3_wal_replication *pReplication, int makeDflt);
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_unregister(
+  sqlite3_wal_replication *pReplication);
+
+/*
+** CAPI3REF: Check if WAL replication is enabled on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_enabled(D,S,E,R)] interface checks if WAL
+** replication is enabled for schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_enabled()] interface returns SQLITE_OK on
+** success or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to sqlite3_wal_replication_enabled(D,S,E,R)
+** requires that the database connection D is in [WAL mode].
+**
+** On success, the [sqlite3_wal_replication_enabled()] interface sets *E to 1 if
+** WAL replication is enabled for schema S of database D, or to 0 otherwise.
+**
+** If replication is enabled, and schema S of database D is currently performing
+** leader replication (i.e. sqlite3_wal_replication_leader() was called against
+** it), the *R pointer will be set to the sqlite3_wal_replication object
+** currently being used for replicating WAL events.
+**
+** If replication is enabled, and schema S of database D is currently performing
+** follower replication (i.e. sqlite3_wal_replication_follower() was called
+** against it), the *R pointer will be set to NULL.
+**
+** The [sqlite3_wal_replication_enabled()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+**/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_enabled(
+  sqlite3 *db,                            /* Database handle */
+  const char *zSchema,                    /* Name of attached database (or NULL) */
+  int *pbEnabled,                         /* OUT: True if WAL replication is enabled */
+  sqlite3_wal_replication **ppReplication /* OUT: If leader replication is on */
+);
+
+/*
+** CAPI3REF: Enable leader WAL replication on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_leader(D,S,R,A)] interface enables leader
+** write-ahead log replication for schema S of [database connection] D, using
+** the WAL replication implementation registered with name R. Argument A will be
+** passed back to the methods defined by R when WAL-related events occurr on
+** this connection.
+**
+** The [sqlite3_wal_replication_leader()] interface returns SQLITE_OK on success
+** or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_leader(D,S,R,A)]
+** requires that a [sqlite3_wal_replication] implementation has been registered
+** under the name R (using the [sqlite3_wal_replication_register()] interface),
+** that the database file for schema S is in [WAL mode], and that no WAL
+** replication is currently enabled for schema S of connection D.
+**
+** After the call returns, leader WAL replication will be enabled for this
+** database and from this point on SQLite will notify the given
+** [sqlite3_wal_replication] implementation whenever a WAL event involving a
+** write transaction occurs (begin, write frames, undo, end). SQLite will block
+** on the particular [sqlite3_wal_replication] hook that was fired. The hook
+** implementation should typically broadcast the WAL-changing event to a number
+** of other nodes and wait for a quorum of them to acknowledge it.
+**
+** The [sqlite3_wal_replication_leader()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_leader(
+  sqlite3 *db,                /* Database handle */
+  const char *zSchema,        /* Name of attached database (or NULL) */
+  const char *zReplication,   /* Name of the sqlite3_wal_replication to use */
+  void *pArg                  /* Argument to pass back to replication methods */
+);
+
+/*
+** CAPI3REF: Enable follower WAL replication on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_follower(D,S)] interface enables follower
+** write-ahead log replication on schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_follower()] interface returns SQLITE_OK on
+** success or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_follower(D,S)]
+** requires that the database file for schema S is in [WAL mode], and that no
+** WAL replication is currently enabled for schema S of connection D.
+**
+** After the call returns, follower WAL replication will be enabled for this
+** connection. A [sqlite3_wal_replication] implementation configured on another
+** SQLite node should be in charge of "driving" the lifecycle of this
+** connection's WAL. The typical implementation will broadcast to follower
+** SQLite nodes all WAL events received by a leader connection, and wait for a
+** quorum before returning from the relevant WAL hooks (write frames, undo).
+**
+** When a database is in follower WAL replication mode, no backup can be
+** performed on it.
+**
+** The [sqlite3_wal_replication_follower()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_follower(
+  sqlite3 *db,                      /* Database handle */
+  const char *zSchema               /* Name of attached database (or NULL) */
+);
+
+/*
+** CAPI3REF: Disable leader or follower WAL replication on a connection.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_none(D,S)] interface disables leader or follower
+** write-ahead log replication on schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_none()] interface returns SQLITE_OK on success
+** or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_none(D,S)] requires
+** that the database file for schema S is in [WAL mode], and that the given
+** connection was previously configured for leader or follower WAL replication
+** using either [sqlite3_wal_replication_leader()] or
+** [sqlite3_wal_replication_follower()].
+**
+** After the call returns, no WAL replication will be enabled for this
+** connection. If the database was set to leader WAL replication, from this
+** point on SQLite won't invoke any more hooks on the [sqlite3_wal_replication]
+** implementation, for WAL events associated with schema S of [database
+** connection] D.
+**
+** The [sqlite3_wal_replication_none()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_none(
+  sqlite3 *db,                      /* Database handle */
+  const char *zSchema               /* Name of attached database (or NULL) */
+);
+
+/*
+** CAPI3REF: Write WAL frames in the context of a replicated transaction.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_frames(D,S,B,P,N,L,D,T,C)] interface writes new
+** frames into the write-ahead log for schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_frames()] interface returns SQLITE_OK on success
+** or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_frames()] requires
+** that schema S of [database connection] D has been set to follower WAL
+** replication mode using [sqlite3_wal_replication_follower()].
+**
+** The B, P, N, L, D, T, and C parameters contain information about the new
+** frames to append to the write-ahead log. If B is non-zero, then this is the
+** first batch of frames of a new WAL write transaction, and a new transaction
+** will be started. If C is non-zero, then this is the final batch of frames of
+** a WAL write transaction, and a commit will be performed. The P parameter
+** contains the size of each page in bytes, the N parameter contains the number
+** of frames to write, the L parameter is an ordered array of N page numbers
+** (one for each frame to write), and the D parameter is an ordered array of
+** N page data blocks of size P (one for each page number in L).
+**
+** The sqlite3_wal_replication_frames() interface is designed to match the
+** typical use case of a follower SQLite node obtaining the various parameters
+** by sequentially reading a byte stream from a network socket and passing
+** the data to this routine directly without any copy or futher allocation,
+** possibly except for integer encoding/decoding.
+**
+** The [sqlite3_wal_replication_frames()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_frames(
+  sqlite3 *db,         /* Database handle */
+  const char *zSchema, /* Name of attached database (or NULL) */
+  int isBegin,         /* Begin flag (for new transactions) */
+  int szPage,          /* Database page-size in bytes */
+  int nFrame,          /* Number of frames to write */
+  unsigned *aPgno,     /* Array of nList page numbers */
+  void *aPage,         /* Array of nList pages, each of szPage bytes */
+  unsigned nTruncate,  /* Truncate flag, used by the WAL */
+  int isCommit         /* Commit flag, used for committing */
+);
+
+/*
+** CAPI3REF: Undo WAL changes in the context of a replicated transaction.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_undo(D,S)] interface reverts the changes of a
+** WAL write transaction for schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_undo()] interface returns SQLITE_OK on success
+** or an appropriate [error code] if it fails.
+**
+** In order to succeed, a call to [sqlite3_wal_replication_undo()] requires that
+** schema S of [database connection] D has been set to follower WAL replication
+** mode using [sqlite3_wal_replication_follower()].
+**
+** The [sqlite3_wal_replication_undo()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_undo(
+  sqlite3 *db,                      /* Database handle */
+  const char *zSchema               /* Name of attached database (or NULL) */
+);
+
+/*
+** CAPI3REF: Checkpoint a replicated WAL.
+** EXPERIMENTAL
+**
+** The [sqlite3_wal_replication_checkpoint(D,S,M,L,C)] interface checkpoints the
+** replicated WAL for schema S of [database connection] D.
+**
+** The [sqlite3_wal_replication_checkpoint()] interface returns SQLITE_OK on
+** success or an appropriate [error code] if it fails.
+**
+** This interface is meant to be used by WAL replication implementations to
+** perform a checkpoint on a connection in follower replication mode.
+**
+** The parameters have the same meaning as for the [sqlite3_wal_checkpoint_v2]
+** interface.
+**
+** The [sqlite3_wal_replication_checkpoint()] interface is only available when the
+** SQLITE_ENABLE_WAL_REPLICATION compile-time option is used.
+*/
+SQLITE_EXPERIMENTAL int sqlite3_wal_replication_checkpoint(
+  sqlite3 *db,                    /* Database handle */
+  const char *zSchema,            /* Name of attached database (or NULL) */
+  int eMode,                      /* Type of checkpoint */
+  int *pnLog,                     /* OUT: Final number of frames in log */
+  int *pnCkpt                     /* OUT: Final number of checkpointed frames */
+);
 
 /*
 ** Undo the hack that converts floating point types to integer for
