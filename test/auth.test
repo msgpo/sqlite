@@ -2598,8 +2598,7 @@ do_test auth-8.2 {
 # invocation with no column name specified, compilation fails.
 #
 set ::authargs [list]
-proc auth {op args} {
-  foreach {a b c d} $args break
+proc auth {op a b c d} {
   lappend ::authargs $op $a $b $c $d
   if {$op == "SQLITE_READ"} { return "SQLITE_DENY" }
   return "SQLITE_OK"

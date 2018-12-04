@@ -6957,11 +6957,10 @@ case OP_VFilter: {   /* jump */
 **
 ** If the VColumn opcode is being used to fetch the value of
 ** an unchanging column during an UPDATE operation, then the P5
-** value is OPFLAG_NOCHNG.  This will cause the sqlite3_vtab_nochange()
-** function to return true inside the xColumn method of the virtual
-** table implementation.  The P5 column might also contain other
-** bits (OPFLAG_LENGTHARG or OPFLAG_TYPEOFARG) but those bits are
-** unused by OP_VColumn.
+** value is 1.  Otherwise, P5 is 0.  The P5 value is returned
+** by sqlite3_vtab_nochange() routine and can be used
+** by virtual table implementations to return special "no-change"
+** marks which can be more efficient, depending on the virtual table.
 */
 case OP_VColumn: {
   sqlite3_vtab *pVtab;
@@ -6983,8 +6982,7 @@ case OP_VColumn: {
   assert( pModule->xColumn );
   memset(&sContext, 0, sizeof(sContext));
   sContext.pOut = pDest;
-  testcase( (pOp->p5 & OPFLAG_NOCHNG)==0 && pOp->p5!=0 );
-  if( pOp->p5 & OPFLAG_NOCHNG ){
+  if( pOp->p5 ){
     sqlite3VdbeMemSetNull(pDest);
     pDest->flags = MEM_Null|MEM_Zero;
     pDest->u.nZero = 0;
@@ -7061,10 +7059,7 @@ case OP_VNext: {   /* jump */
 case OP_VRename: {
   sqlite3_vtab *pVtab;
   Mem *pName;
-  int isLegacy;
-  
-  isLegacy = (db->flags & SQLITE_LegacyAlter);
-  db->flags |= SQLITE_LegacyAlter;
+
   pVtab = pOp->p4.pVtab->pVtab;
   pName = &aMem[pOp->p1];
   assert( pVtab->pModule->xRename );
@@ -7078,7 +7073,6 @@ case OP_VRename: {
   rc = sqlite3VdbeChangeEncoding(pName, SQLITE_UTF8);
   if( rc ) goto abort_due_to_error;
   rc = pVtab->pModule->xRename(pVtab, pName->z);
-  if( isLegacy==0 ) db->flags &= ~SQLITE_LegacyAlter;
   sqlite3VtabImportErrmsg(p, pVtab);
   p->expired = 0;
   if( rc ) goto abort_due_to_error;
