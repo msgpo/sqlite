@@ -196,6 +196,16 @@ int sqlite3PagerSharedLock(Pager *pPager);
   int sqlite3PagerWalFramesize(Pager *pPager);
 #endif
 
+#ifdef SQLITE_ENABLE_WAL_REPLICATION
+  int sqlite3PagerWalReplicationGet(Pager*, int*, sqlite3_wal_replication**);
+  int sqlite3PagerWalReplicationSet(Pager*,
+    sqlite3*, int, sqlite3_wal_replication*, void*);
+  int sqlite3PagerWalReplicationFrames(Pager*,
+    int, int, int, unsigned*, void*, unsigned, int);
+  int sqlite3PagerWalReplicationUndo(Pager*);
+  int sqlite3PagerWalReplicationCheckpoint(Pager*, sqlite3*, int, int*, int*);
+#endif /* SQLITE_ENABLE_WAL_REPLICATION */
+
 /* Functions used to query pager state and configuration. */
 u8 sqlite3PagerIsreadonly(Pager*);
 u32 sqlite3PagerDataVersion(Pager*);
